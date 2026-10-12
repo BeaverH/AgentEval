@@ -13,6 +13,37 @@ import { useBusinessDemo } from "./provider";
 export function OwnerMenu({ compact = false }: { compact?: boolean }) {
   const { mode, currentOwner, owners, switchOwner, disconnect, busy } =
     useBusinessDemo();
+  return (
+    <AccountMenu
+      compact={compact}
+      mode={mode}
+      currentOwner={currentOwner}
+      owners={owners}
+      switchOwner={switchOwner}
+      disconnect={disconnect}
+      busy={busy}
+    />
+  );
+}
+
+/** Shared account presentation; each workspace supplies its own session. */
+export function AccountMenu({
+  compact = false,
+  mode,
+  currentOwner,
+  owners,
+  switchOwner,
+  disconnect,
+  busy,
+}: {
+  compact?: boolean;
+  mode: "mock" | "live";
+  currentOwner?: string | undefined;
+  owners?: string[] | undefined;
+  switchOwner?: ((owner: string) => void) | undefined;
+  disconnect?: (() => void) | undefined;
+  busy?: boolean | undefined;
+}) {
   const name = mode === "mock" ? (currentOwner ?? "Admin") : "Guard connection";
   const initials =
     mode === "live"
@@ -37,7 +68,11 @@ export function OwnerMenu({ compact = false }: { compact?: boolean }) {
               <span className="min-w-0 flex-1 text-left text-xs">
                 <strong className="block truncate font-medium">{name}</strong>
                 <span className="block text-[10px] text-muted-foreground">
-                  {mode === "live" ? (disconnect ? "Personal access token" : "Connected") : "Local account"}
+                  {mode === "live"
+                    ? disconnect
+                      ? "Personal access token"
+                      : "Connected"
+                    : "Local account"}
                 </span>
               </span>
               <ChevronDown className="size-3.5 text-muted-foreground" />
@@ -69,7 +104,9 @@ export function OwnerMenu({ compact = false }: { compact?: boolean }) {
             <LogOut className="size-4" />
             Switch account
           </DropdownMenuItem>
-        ) : <DropdownMenuLabel>Connected automatically</DropdownMenuLabel>}
+        ) : (
+          <DropdownMenuLabel>Connected automatically</DropdownMenuLabel>
+        )}
       </DropdownMenuContent>
     </DropdownMenu>
   );

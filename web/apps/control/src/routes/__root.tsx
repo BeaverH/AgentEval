@@ -1,17 +1,24 @@
 import type { QueryClient } from "@tanstack/react-query";
 import {
+  ClientOnly,
   HeadContent,
   Scripts,
   createRootRouteWithContext,
   redirect,
 } from "@tanstack/react-router";
+import { NmgrApp } from "@/features/nmgr/app";
+
+declare const __TALI_UI_DEMO__: boolean;
+const prototypeDemo =
+  typeof __TALI_UI_DEMO__ !== "undefined" && __TALI_UI_DEMO__;
+
 import { MarketplaceShell } from "@/features/marketplace/shell";
 import appCss from "../styles.css?url";
 
 export const Route = createRootRouteWithContext<{
   queryClient: QueryClient;
 }>()({
-  component: MarketplaceShell,
+  component: prototypeDemo ? DemoRoot : MarketplaceShell,
   beforeLoad: ({ location }) => {
     const guardrailDetail = location.pathname.match(
       /^\/[^/]+\/governance\/guardrails\/([^/]+)\/?$/,
@@ -38,7 +45,7 @@ export const Route = createRootRouteWithContext<{
         name: "viewport",
         content: "width=device-width, initial-scale=1",
       },
-      { title: "Profiles" },
+      { title: prototypeDemo ? "NMGR · Guardrail Governance" : "Profiles" },
       {
         name: "description",
         content: "Profiles and Guardrails",
@@ -51,6 +58,20 @@ export const Route = createRootRouteWithContext<{
   }),
   shellComponent: RootDocument,
 });
+
+function DemoRoot() {
+  return (
+    <ClientOnly
+      fallback={
+        <div className="p-8" role="status">
+          Loading workspace…
+        </div>
+      }
+    >
+      <NmgrApp />
+    </ClientOnly>
+  );
+}
 
 function RootDocument({ children }: { children: React.ReactNode }) {
   return (
