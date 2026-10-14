@@ -1,5 +1,5 @@
-import { Fragment, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { createPortal } from "react-dom";
+import { statusLabel } from "./status-label";
+import { Fragment, useEffect, useState } from "react";
 import {
   FlaskConical,
   Search,
@@ -18,7 +18,6 @@ import {
   editEntity,
   reviseEntity,
   deployedEntity,
-  accounts,
   roleForOwner,
   canAuthor,
   allowed,
@@ -31,12 +30,13 @@ import {
   type State,
 } from "./model";
 import { NmgrShell, type View } from "./shell";
+import { ProtectionSummary } from "./protection-summary";
+import { actorNames, homeFor, canVisit, inScope } from "./workbench";
 import "./nmgr.css";
 import { ResizableSheetContent } from "./resizable-sheet";
 import { TestRecords } from "./test-records";
 import {
   ProfileMonitoring,
-  MonitoringMetrics,
   profileScans,
 } from "./monitoring";
 import { UnifiedConfigForm } from "../business-demo/unified-config-form";
@@ -49,6 +49,7 @@ import { GuardrailInfo } from "./guardrail-info";
 import {
   CheckboxFilter,
   WorkflowSteps,
+  WorkflowNotice,
   filterFields,
   filterValue,
   matchesFilters,
@@ -56,20 +57,18 @@ import {
   type Filters,
 } from "./studio";
 
-import { completeDemoState } from "./mock-data";
-import { AlertList } from "./alert-list";
-import { ActivityLogs } from "./activity-logs";
+import { initialOwner, saveOwner, useDemoState } from "./demo-storage";
+import { OperationHistory, EntitySummary } from "./operation-history";
+import { EnforcementList } from "./enforcement-list";
+import { DeploymentQueues } from "./deployment-queues";
 import {
   buildAlerts,
-  defaultAlertFilters,
   profileAlertCounts,
   monitoringHash,
   readMonitoringTarget,
   type MonitoringTarget,
-  type AlertFilters,
 } from "./alerts";
 
-const storage = "nmgr-prototype-v1";
 const stamp = (v: string) =>
   new Date(v).toLocaleString("en-GB", { timeZone: "Asia/Shanghai" });
 const version = (v: number | null) => (v === null ? "None" : `${v}.0`);
@@ -78,7 +77,7 @@ function Badge({ children }: { children: React.ReactNode }) {
     <span
       className={`nm-badge ${["Error", "CRITICAL", "Pass all"].includes(String(children)) ? "warning" : ["Blocked", "Block all"].includes(String(children)) ? "bad" : ["Detected", "Transferred"].includes(String(children)) ? "info" : ""} ${String(children).includes("FAIL") ? "bad" : ["DEPLOYED", "SIGNED OFF", "TEST PASSED", "Normal"].includes(String(children)) ? "good" : ""}`}
     >
-      {children}
+      {typeof children === "string" ? statusLabel(children) : children}
     </span>
   );
 }
@@ -109,30 +108,43 @@ function Select({
   );
 }
 export function NmgrApp() {
-  const [state, setState] = useState<State>(() => seed());
-  const [ready, setReady] = useState(false);
-  const [owner, setOwner] = useState(() => {
-    try {
-      const value = localStorage.getItem("nmgr-owner");
-      return value && accounts.includes(value) ? value : "Admin";
-    } catch {
-      return "Admin";
-    }
-  });
+  const { state, ready, updateState } = useDemoState(setNotice);
+  const [owner, setOwner] = useState(initialOwner);
   const role = roleForOwner(owner);
+  const controlUnit = "ISS";
+  const [reviewTests, setReviewTests] = useState(false);
+  const [resultLink, setResultLink] = useState<{
+    kind: Kind;
+    view: View;
+    id: string;
+    label: string;
+  } | null>(null);
   useEffect(() => {
     try {
-      localStorage.setItem("nmgr-owner", owner);
+      saveOwner(owner);
     } catch {}
   }, [owner]);
   function switchOwner(value: string) {
     if (busy) return;
+    if (
+      dirty &&
+      !window.confirm("Discard unsaved changes and switch workbench?")
+    )
+      return;
     setOwner(value);
+    setUnit("All");
+    setSearch("");
+    setStudioFilters({});
+    setExpandedProfiles([]);
+    setReviewTests(false);
+    setResultLink(null);
+    setNotice("");
+    go(...homeFor(roleForOwner(value)));
     setModal(null);
     setDirty(false);
     setConfirmClose(false);
     try {
-      localStorage.setItem("nmgr-owner", value);
+      saveOwner(value);
     } catch {}
   }
   const [dirty, setDirty] = useState(false);
@@ -159,80 +171,51 @@ export function NmgrApp() {
   const [expandedProfiles, setExpandedProfiles] = useState<string[]>([]);
   const [monitoringTarget, setMonitoringTarget] =
     useState<MonitoringTarget | null>(null);
-  const [alertFilters, setAlertFilters] =
-    useState<AlertFilters>(defaultAlertFilters);
-  const [showInfoAlerts, setShowInfoAlerts] = useState(false);
-  const [returnedAlertId, setReturnedAlertId] = useState("");
-  const repositoryFiltersRef = useRef<HTMLDivElement>(null);
-  useLayoutEffect(() => {
-    if (kind !== "Guardrail" || view !== "repository") return;
-    const root = repositoryFiltersRef.current;
-    const options = root?.querySelector(
-      '[data-filter="Status"] .nm-filter-options',
-    );
-    const labels = options?.querySelectorAll("label");
-    const all = labels?.[0],
-      draft = labels?.[1];
-    if (!root || !options || !all || !draft) return;
-    const syncGap = () => {
-      const gap =
-        draft.getBoundingClientRect().left - all.getBoundingClientRect().right;
-      root.style.setProperty(
-        "--nm-repository-option-gap",
-        `${Math.max(0, gap)}px`,
-      );
-    };
-    syncGap();
-    const observer = new ResizeObserver(syncGap);
-    observer.observe(options);
-    observer.observe(all);
-    observer.observe(draft);
-    return () => observer.disconnect();
-  }, [kind, view]);
   const [modal, setModal] = useState<
     "create" | "edit" | Action | "report" | "reset" | null
   >(null);
   const [report, setReport] = useState<Run | null>(null);
   const [error, setError] = useState("");
-  const [notification, setNotification] = useState({ message: "", id: 0 });
+  const [notification, setNotification] = useState({
+    message: "", id: 0, page: "", owner: "",
+  });
   function setNotice(message: string) {
-    setNotification((previous) => ({ message, id: previous.id + 1 }));
+    setNotification((previous) => ({
+      message,
+      id: previous.id + 1,
+      page: window.location.hash,
+      owner,
+    }));
   }
+  const noticeOnPage =
+    notification.page === window.location.hash && notification.owner === owner;
   useEffect(() => {
-    if (!notification.message) return;
-    const timer = window.setTimeout(() => {
-      setNotification((current) =>
-        current.id === notification.id ? { ...current, message: "" } : current,
+    if (!noticeOnPage) {
+      setNotification((previous) =>
+        previous.message ? { ...previous, message: "" } : previous,
       );
-    }, 5000);
-    return () => window.clearTimeout(timer);
-  }, [notification]);
+      setResultLink(null);
+    }
+  }, [noticeOnPage]);
   const [busy, setBusy] = useState(false);
   const [dataset, setDataset] = useState("PII acceptance suite");
   const [cases, setCases] = useState(24);
   const [fail, setFail] = useState(false);
   const [reason, setReason] = useState("");
+  const [signoffApprover, setSignoffApprover] = useState("Feng ZONG");
   const [policies, setPolicies] = useState(
     "Detect personal identifiers in input and output.\nBlock disclosure of unmasked customer information.",
   );
+  const [configurationRefs, setConfigurationRefs] = useState<string[]>([]);
+  const [configurationThreshold, setConfigurationThreshold] = useState("5");
   const [technical, setTechnical] = useState<UnifiedConfig>(emptyConfig);
   const [tab, setTab] = useState("Info");
-  const [logType, setLogType] = useState("Audit Log");
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(storage);
-      if (raw) {
-        const x = JSON.parse(raw);
-        if (!Array.isArray(x.entities) || !Array.isArray(x.audit))
-          throw new Error();
-        setState(completeDemoState(x));
-      }
-    } catch {
-      setNotice("Saved demo data could not be read. Sample data loaded.");
-    }
-    setReady(true);
     const read = () => {
-      const [k, v, id] = locationHash();
+      const currentRole = roleForOwner(initialOwner());
+      const [k, v, id] = window.location.hash
+        ? locationHash()
+        : ([...homeFor(currentRole), ""] as [Kind, View, string]);
       setMonitorGuardrail("");
       setMonitoringTarget(readMonitoringTarget(window.location.hash));
       setKind(k);
@@ -244,26 +227,27 @@ export function NmgrApp() {
     window.addEventListener("hashchange", read);
     return () => window.removeEventListener("hashchange", read);
   }, []);
-  useEffect(() => {
-    if (ready)
-      try {
-        localStorage.setItem(storage, JSON.stringify(state));
-      } catch {
-        setNotice(
-          "Browser storage is full. Changes remain available until this page is closed.",
-        );
-      }
-  }, [state, ready]);
   useEffect(
     () => setPage(1),
     [search, unit, location, studioFilters, kind, view],
   );
-  const e = state.entities.find((x) => x.id === selected);
+  const scopedEntities = state.entities.filter((item) =>
+    inScope(item, role, controlUnit),
+  );
+  const scopedState = { ...state, entities: scopedEntities };
+  const e = scopedEntities.find((x) => x.id === selected && x.kind === kind);
+  const fullDetail =
+    !!e && role !== "IT Admin" && ["repository", "signoff"].includes(view);
+  useEffect(() => {
+    if (!canVisit(role, kind, view)) go(...homeFor(role));
+    else if (selected && ready && !e) go(kind, view);
+  }, [role, kind, view, selected, ready]);
   const monitoringGuardrail = state.entities
     .map(deployedEntity)
     .find((item) => item.id === monitorGuardrail);
   function go(k: Kind, v: View, id = "", target?: MonitoringTarget) {
     setMonitorGuardrail("");
+    setReviewTests(false);
     setMonitoringTarget(target ?? null);
     window.location.hash = target
       ? monitoringHash(target)
@@ -274,49 +258,73 @@ export function NmgrApp() {
     if (k !== kind || v !== view || target) {
       setSearch("");
       setStudioFilters({});
-      setUnit("All");
+      if (!(
+        role === "IT Admin" &&
+        ["dashboard", "operations"].includes(view) &&
+        ["dashboard", "operations"].includes(v)
+      ))
+        setUnit("All");
       setLocation("All");
     }
     setTab(v === "operations" ? "Monitoring" : "Info");
   }
   function open(action: typeof modal, item?: Entity) {
     if (item) setSelected(item.id);
+    setResultLink(null);
     setModal(action);
     setDirty(false);
     setConfirmClose(false);
     setError("");
     setReason("");
+    setSignoffApprover(item?.approver ?? e?.approver ?? "Feng ZONG");
     setFail(false);
+    setDataset(`${item?.name ?? e?.name ?? "Guardrail"} acceptance suite`);
     setPolicies((item?.policies ?? e?.policies ?? []).join("\n"));
+    setConfigurationRefs([...(item?.refs ?? e?.refs ?? [])]);
+    setConfigurationThreshold(String(item?.threshold ?? e?.threshold ?? 5));
     setTechnical(item?.config ?? e?.config ?? emptyConfig());
   }
   function perform(action: Action) {
     if (!e) return;
     try {
-      if (action === "deploy" && fail)
-        throw new Error(
-          "Demo deployment failed. No version was changed. Retry or contact the support team.",
-        );
-      const next = transition(state, e.id, action, role, {
-        actorName: owner,
-        dataset,
-        cases,
-        reason,
-        policies: policies
-          .split("\n")
-          .map((x) => x.trim())
-          .filter(Boolean),
-        ...(action === "implement" &&
-        (e.config ||
-          technical.content.trim() ||
-          technical.scannerType !== "custom")
-          ? { config: technical }
-          : {}),
-      });
-      setState(next);
+      updateState((latest) =>
+        transition(latest, e.id, action, role, {
+          actorName: actorNames[role],
+          ...(action === "implement" && e.kind === "Profile"
+            ? {
+                refs: configurationRefs,
+                threshold: Number(configurationThreshold),
+              }
+            : {}),
+          dataset,
+          cases,
+          reason,
+          ...(action === "request" ? { approver: signoffApprover } : {}),
+          policies: policies
+            .split("\n")
+            .map((x) => x.trim())
+            .filter(Boolean),
+          ...(action === "implement" &&
+          (e.config ||
+            technical.content.trim() ||
+            technical.scannerType !== "custom")
+            ? { config: technical }
+            : {}),
+        }),
+      );
       setModal(null);
+      setDirty(false);
+      setReviewTests(false);
+      if (action === "implement") go("Guardrail", "tests", e.id);
+      if (action === "approve" || action === "reject")
+        setResultLink({
+          kind: e.kind,
+          view: "signoff",
+          id: "",
+          label: `View ${e.kind.toLowerCase()} requests`,
+        });
       setNotice(
-        `${e.name}: ${action === "deploy" ? "deployed successfully" : action === "reject" ? "request rejected; returned to TEST READY" : action === "approve" ? "request approved; ready for deployment" : action === "request" ? "signoff request submitted" : "updated successfully"}.`,
+        `${e.name}: ${action === "deploy" ? "deployed successfully" : action === "reject" ? (e.kind === "Profile" ? "request rejected; returned to DRAFT" : "request rejected; returned to TEST READY") : action === "approve" ? (e.kind === "Profile" ? "request approved; Profile is now active" : "request approved; ready for Tech Implementor deployment") : action === "request" ? "signoff request submitted" : "updated successfully"}.`,
       );
     } catch (x) {
       setError(x instanceof Error ? x.message : "Unable to complete action.");
@@ -325,7 +333,11 @@ export function NmgrApp() {
   function changeMode(item: Entity, mode: Entity["mode"]) {
     if (mode === item.mode) return;
     try {
-      setState(transition(state, item.id, mode, role, { actorName: owner }));
+      updateState((latest) =>
+        transition(latest, item.id, mode, role, {
+          actorName: actorNames[role],
+        }),
+      );
       setNotice(`${item.name}: mode changed to ${mode}.`);
     } catch (x) {
       setNotice(x instanceof Error ? x.message : "Unable to change mode.");
@@ -339,8 +351,9 @@ export function NmgrApp() {
       setBusy(false);
     }, 650);
   }
-  const isStudio = ["repository", "tests", "signoff"].includes(view);
-  const rows = state.entities
+  const isStudio = ["repository", "tests", "signoff", "deploy"].includes(view);
+  const isBlank = ["audit", "logs"].includes(view);
+  const rows = scopedEntities
     .filter(
       (x) =>
         x.kind === kind &&
@@ -350,11 +363,13 @@ export function NmgrApp() {
             ? x.status === "SIGNOFF REQUESTED"
             : view === "deploy"
               ? x.status === "SIGNED OFF"
-              : view === "operations"
+              : ["operations", "enforce"].includes(view)
                 ? x.deployed !== null
                 : true),
     )
-    .map((x) => (view === "operations" ? deployedEntity(x) : x))
+    .map((x) =>
+      ["operations", "enforce"].includes(view) ? deployedEntity(x) : x,
+    )
     .filter(
       (x) =>
         `${x.name} ${x.id} ${x.description}`
@@ -378,8 +393,13 @@ export function NmgrApp() {
       );
     }
   }, [monitoringTarget, view, state.entities]);
-  const activeProfiles = state.entities
-    .filter((x) => x.kind === "Profile" && x.deployed !== null)
+  const activeProfiles = scopedEntities
+    .filter(
+      (x) =>
+        x.kind === "Profile" &&
+        x.deployed !== null &&
+        (unit === "All" || x.unit === unit),
+    )
     .map(deployedEntity);
   const scans = activeProfiles.flatMap((p) => profileScans(p, state));
   const alerts = buildAlerts(activeProfiles, scans);
@@ -389,42 +409,73 @@ export function NmgrApp() {
       profileAlertCounts(alerts, profile.id),
     ]),
   );
-  function backToAlerts(activity: string) {
-    const alert = alerts.find((item) => item.target?.activity === activity);
-    setReturnedAlertId(alert?.id ?? "");
-    if (alert?.level === "INFO") setShowInfoAlerts(true);
-    // A refreshed deep link can return to a board with default filters.
-    if (alert)
-      setAlertFilters((filters) => ({
-        level:
-          filters.level === "All" || filters.level === alert.level
-            ? filters.level
-            : "All",
-        profile:
-          filters.profile === "All" || filters.profile === alert.profile
-            ? filters.profile
-            : "All",
-        guardrail:
-          filters.guardrail === "All" || filters.guardrail === alert.guardrail
-            ? filters.guardrail
-            : "All",
-      }));
+  const enforcementList = <EnforcementList key={`${role}-${view}`} profiles={activeProfiles} state={state}
+    role={role} alertCounts={alertCountsByProfile} onModeChange={changeMode} />;
+  function backToAlerts() {
     go("Profile", "dashboard");
   }
+  const isBusinessIntents =
+    role === "User" &&
+    kind === "Guardrail" &&
+    view === "repository" &&
+    !fullDetail;
+  const showRepositoryCreate =
+    view === "repository" && !fullDetail && canAuthor(role);
   const title =
-    view === "dashboard"
-      ? "Guardrail Dashboard"
-      : view === "logs"
-        ? "Activity Logs"
-        : view === "operations"
-          ? "Monitoring"
-          : view === "deploy"
-            ? `Deploy ${kind}s`
-            : view === "tests"
-              ? `${kind} Test Base`
-              : view === "signoff"
-                ? `${kind} Sign-Off`
-                : `${kind}s`;
+    view === "enforce"
+      ? "Enforce & Prevent"
+      : view === "audit"
+        ? "Trace"
+        : view === "dashboard"
+          ? "Protection Dashboard"
+          : view === "logs"
+            ? "Trace"
+            : ["operations", "enforce"].includes(view)
+              ? "Monitoring"
+              : view === "deploy"
+                ? "GR Deployment"
+                : view === "tests"
+                  ? "GR Evaluation"
+                  : view === "signoff"
+                    ? `${kind} Sign-Off`
+                    : view === "request"
+                      ? "New Guardrail Request"
+                      : role === "IT Admin"
+                        ? "GR Requests"
+                        : kind === "Guardrail"
+                          ? "Guardrails"
+                          : "Configure Profiles";
+  const studioFields = filterFields
+    .filter(
+      (field) =>
+        (role === "IT Admin" || field.key !== "unit") &&
+        (kind === "Profile" || !["bu", "agent", "data"].includes(field.key)),
+    )
+    .map((field) => {
+      const options =
+        field.key === "status"
+          ? view === "tests"
+            ? ["TEST READY", "TEST FAILED", "TEST PASSED"]
+            : view === "signoff"
+              ? ["SIGNOFF REQUESTED"]
+              : view === "deploy"
+                ? ["SIGNED OFF"]
+                : kind === "Profile"
+                  ? ["DRAFT", "SIGNOFF REQUESTED", "SIGNED OFF"]
+                  : studioStatuses
+          : field.key === "unit"
+            ? controlUnits
+            : [
+                ...new Set([
+                  ...field.options,
+                  ...state.entities
+                    .filter((x) => x.kind === kind)
+                    .map((x) => filterValue(x, field.key))
+                    .filter((value) => value && value !== "ALL"),
+                ]),
+              ];
+      return { ...field, options };
+    });
   const filters = isStudio ? (
     <>
       <div className="flex flex-wrap items-center gap-3 border-b p-4">
@@ -439,40 +490,19 @@ export function NmgrApp() {
           />
         </div>
       </div>
-      <div
-        ref={repositoryFiltersRef}
-        className={`nm-studio-filters space-y-4 border-b bg-zinc-50/40 px-5 py-4 ${kind === "Profile" ? "nm-profile-filters" : kind === "Guardrail" && view === "repository" ? "nm-guardrail-repository-filters" : ""}`}
-      >
-        {filterFields
-          .filter(
-            (field) =>
-              kind === "Profile" ||
-              !["bu", "agent", "data"].includes(field.key),
-          )
-          .map((field) => {
-            const options =
-              field.key === "status"
-                ? view === "tests"
-                  ? ["TEST READY", "TEST FAILED", "TEST PASSED"]
-                  : view === "signoff"
-                    ? ["SIGNOFF REQUESTED"]
-                    : studioStatuses
-                : field.key === "unit"
-                  ? controlUnits
-                  : [
-                      ...new Set([
-                        ...field.options,
-                        ...state.entities
-                          .filter((x) => x.kind === kind)
-                          .map((x) => filterValue(x, field.key))
-                          .filter((value) => value && value !== "ALL"),
-                      ]),
-                    ];
-            return (
+      <div className="nm-studio-filters space-y-4 border-b bg-zinc-50/40 px-5 py-4">
+        <div
+          className="nm-filter-scroll"
+          role="region"
+          aria-label="Filter options"
+          tabIndex={0}
+        >
+          <div className="nm-filter-grid">
+            {studioFields.map((field) => (
               <CheckboxFilter
                 key={field.key}
                 label={field.label}
-                options={options}
+                options={field.options}
                 selected={studioFilters[field.key] ?? []}
                 onChange={(values) =>
                   setStudioFilters((current) => ({
@@ -481,8 +511,9 @@ export function NmgrApp() {
                   }))
                 }
               />
-            );
-          })}
+            ))}
+          </div>
+        </div>
         {Object.values(studioFilters).some((values) => values.length) && (
           <Button
             variant="ghost"
@@ -496,7 +527,7 @@ export function NmgrApp() {
     </>
   ) : (
     <div
-      className={`nm-filters ${view === "operations" ? "nm-monitor-filters" : ""}`}
+      className={`nm-filters ${["operations", "enforce"].includes(view) ? "nm-monitor-filters" : ""}`}
     >
       <div className="nm-search">
         <Search size={17} />
@@ -507,12 +538,14 @@ export function NmgrApp() {
           onChange={(x) => setSearch(x.target.value)}
         />
       </div>
-      <Select
-        label="Control Unit"
-        value={unit}
-        onChange={setUnit}
-        options={["All", ...controlUnits]}
-      />
+      {role === "IT Admin" && (
+        <Select
+          label="Control Unit"
+          value={unit}
+          onChange={setUnit}
+          options={["All", ...controlUnits]}
+        />
+      )}
       <Select
         label="Location"
         value={location}
@@ -525,17 +558,13 @@ export function NmgrApp() {
     <TestRecords
       key={item.id}
       item={item}
-      onReport={(run) => {
-        setReport(run);
-        open("report");
-      }}
     />
   );
   const info = (item: Entity) =>
     item.kind === "Guardrail" ? (
       <GuardrailInfo
         item={item}
-        state={state}
+        state={scopedState}
         onProfile={(id) => go("Profile", "repository", id)}
       />
     ) : (
@@ -543,13 +572,13 @@ export function NmgrApp() {
         <div className="nm-facts">
           {[
             ["Control Unit", item.unit],
-            ["Jurisdiction", item.location],
+            ["Location", item.location],
             ["Custodian", item.custodian],
             ["Sign-Off Approver", item.approver],
             ["Mandatory", item.mandatory ? "Yes" : "No"],
-            ["Alert threshold", `${item.threshold}%`],
+            ["Alert Threshold", `${item.thresholdMetric ?? "Error Rate"} > ${item.threshold}%${item.thresholdWindow ? ` in ${item.thresholdWindow} minutes` : ""}`],
             [
-              "Target / Deployed",
+              "Target / Active",
               `${version(item.version)} / ${version(item.deployed)}`,
             ],
           ].map(([k, v]) => (
@@ -560,15 +589,10 @@ export function NmgrApp() {
           ))}
         </div>
         <section className="nm-card nm-padding">
-          <h3>Description</h3>
+          <h3>{item.kind === "Profile" ? "Use Case" : "Description"}</h3>
           <p>{item.description}</p>
-          <h3>Guardrails & matching attributes</h3>
-          {item.status === "DRAFT" ? (
-            <p className="nm-callout">
-              Please wait while your policies are being implemented by Tech.
-              Come back when TEST READY.
-            </p>
-          ) : (
+          <h3>Guardrails & Matching Attributes</h3>
+          {
             <>
               <p>
                 BU/SU: {item.attributes.bu} · Agent Type:{" "}
@@ -578,16 +602,132 @@ export function NmgrApp() {
                 <button
                   className="nm-link"
                   key={id}
-                  onClick={() => go("Guardrail", "repository", id)}
+                  onClick={() => setMonitorGuardrail(id)}
                 >
-                  {state.entities.find((x) => x.id === id)?.name ?? id} →
+                  {state.entities.find((x) => x.id === id)?.name ?? "Unavailable Guardrail"} →
                 </button>
               ))}
             </>
-          )}
+          }
         </section>
       </>
     );
+  const detail = e ? (
+    <>
+      <Button variant="ghost" onClick={() => go(kind, view)}>
+        <ArrowLeft size={16} />
+        Back to {title}
+      </Button>
+      <div className="nm-detail-head">
+        <div>
+          <Badge>{e.status}</Badge>
+          <p className="nm-muted">
+            {e.kind === "Profile" ? "Active" : "Deployed"} Ver.:{" "}
+            {version(e.deployed)} ·{" "}
+            {e.kind === "Guardrail"
+              ? `${state.entities.filter((p) => p.deployed !== null && p.deployedRefs.includes(e.id)).length} Active Profile Refs.`
+              : `${e.refs.length} Guardrails Set`}
+          </p>
+        </div>
+        <div className="nm-actions">
+          {(
+            [
+              "implement",
+              "request",
+              "approve",
+              "reject",
+              "deploy",
+              "revise",
+            ] as Action[]
+          )
+            .filter(
+              (a) =>
+                allowed(e, a, role) &&
+                !(a === "request" && e.kind === "Guardrail" && role === "User"),
+            )
+            .map((a) => (
+              <Button
+                key={a}
+                variant={
+                  ["reject", "revise"].includes(a) ? "outline" : "default"
+                }
+                onClick={() => open(a)}
+              >
+                {
+                  {
+                    implement: "Configure",
+                    request: "Request Signoff",
+                    approve: "Approve",
+                    reject: "Reject",
+                    deploy: "Go Deploy",
+                    revise: "Modify",
+                  }[a as "implement"]
+                }
+              </Button>
+            ))}
+          {allowed(e, "test-pass", role) && (
+            <Button
+              onClick={() =>
+                view === "tests" ? open("test-pass") : go(kind, "tests", e.id)
+              }
+            >
+              <FlaskConical size={16} />
+              {view === "tests" ? "Run Test" : "Go Test"}
+            </Button>
+          )}
+        </div>
+      </div>
+      {role === "User" && e.kind === "Guardrail" && e.runs.length > 0 && (
+        <div className="nm-actions mb-4">
+          <Button onClick={() => setReviewTests(true)}>
+            Review test result
+          </Button>
+        </div>
+      )}
+      {role === "User" && e.status === "DRAFT" && (
+        <Button variant="outline" className="mb-4" onClick={() => open("edit")}>
+          Edit {e.kind === "Guardrail" ? "business intents" : "Profile"}
+        </Button>
+      )}
+      <WorkflowSteps item={e} />
+      <WorkflowNotice item={e} role={role} />
+      {view === "tests" ? (
+        runs(e)
+      ) : (
+        <>
+          <div className="nm-tabs">
+            {[
+              "Info",
+              ...(e.kind === "Guardrail" && role !== "User" ? ["Tests"] : []),
+              ...(e.kind === "Profile" && e.deployed !== null && view !== "signoff"
+                ? ["Monitoring"]
+                : []),
+            ].map((t) => (
+              <button
+                className={tab === t ? "active" : ""}
+                onClick={() => setTab(t)}
+                key={t}
+              >
+                {t === "Info" ? `${kind} Info` : t}
+              </button>
+            ))}
+          </div>
+          {tab === "Tests" ? (
+            runs(e)
+          ) : tab === "Monitoring" && view !== "signoff" ? (
+            <ProfileMonitoring
+              key={e.id}
+              profile={e}
+              state={state}
+              onGuardrail={setMonitorGuardrail}
+            />
+          ) : (
+            info(e)
+          )}
+        </>
+      )}
+    </>
+  ) : null;
   return (
     <>
       <NmgrShell
@@ -595,20 +735,70 @@ export function NmgrApp() {
         view={view}
         owner={owner}
         busy={busy}
+        controlUnit={controlUnit}
+        title={
+          fullDetail
+            ? view === "signoff"
+              ? `Review ${kind} Sign-off Request`
+              : `${kind} Details`
+            : title
+        }
+        description={
+          fullDetail
+            ? (e?.name ?? "")
+            : isBusinessIntents
+              ? "Guardrails repository: View guardrail or create new one. Deployed version is marked in each guardrail."
+              : view === "request"
+                ? "Raise a request with your business intents. Tech Implementor will configure and test the Guardrail."
+                : view === "dashboard"
+                  ? role === "IT Admin"
+                    ? "Protection and breach alerts across all Control Units."
+                    : "Protection and breach alerts for your Control Unit."
+                  : view === "signoff"
+                    ? "Review requests awaiting your sign-off."
+                    : ""
+        }
         onOwner={switchOwner}
-        onNavigate={go}
+        onNavigate={(k, v) => {
+          if (dirty && !window.confirm("Discard unsaved changes?")) return;
+          setDirty(false);
+          setError("");
+          setModal(null);
+          go(k, v);
+        }}
       >
-        <div className="nm-heading">
-          <div>
-            <h1>{title}</h1>
+        {noticeOnPage && notification.message && (
+          <div
+            className={`nm-inline-notice ${notification.message.includes("rejected") ? "nm-inline-error" : ""}`}
+            role="status"
+          >
+            <div>
+              <strong>{notification.message}</strong>
+              {resultLink && (
+                <p>
+                  <button
+                    className="nm-link"
+                    onClick={() => {
+                      go(resultLink.kind, resultLink.view, resultLink.id);
+                      setResultLink(null);
+                    }}
+                  >
+                    {resultLink.label} →
+                  </button>
+                </p>
+              )}
+            </div>
+            <button
+              aria-label="Dismiss notification"
+              onClick={() => {
+                setNotice("");
+                setResultLink(null);
+              }}
+            >
+              <X size={16} />
+            </button>
           </div>
-          {view === "repository" && (
-            <Button disabled={!canAuthor(role)} onClick={() => open("create")}>
-              <Plus size={16} />
-              New {kind === "Guardrail" ? "GR" : "Profile"}
-            </Button>
-          )}
-        </div>
+        )}
         {view === "operations" && (
           <p className="nm-deployed-protection">
             Deployed Protection · <strong>{activeProfiles.length}</strong>{" "}
@@ -623,40 +813,86 @@ export function NmgrApp() {
             Guardrails
           </p>
         )}
-        {view === "dashboard" ? (
-          <>
-            <MonitoringMetrics scans={scans} />
-            <AlertList
-              alerts={alerts}
-              filters={alertFilters}
-              onFilters={setAlertFilters}
-              showInfo={showInfoAlerts}
-              onShowInfo={setShowInfoAlerts}
-              returnedAlertId={returnedAlertId}
-              onActivity={(target) => {
-                setReturnedAlertId("");
-                go("Profile", "operations", "", target);
+        {view === "request" ? (
+          <section className="nm-card nm-padding nm-request-page">
+            {error && (
+              <div role="alert" className="nm-inline-notice nm-inline-error">
+                <span>{error}</span>
+                <button aria-label="Dismiss error" onClick={() => setError("")}>
+                  <X size={16} />
+                </button>
+              </div>
+            )}
+            <CreateForm
+              kind="Guardrail"
+              state={state}
+              owner={actorNames[role]}
+              lockedUnit={controlUnit}
+              onDirty={() => setDirty(true)}
+              onCancel={() => {
+                if (!dirty || window.confirm("Discard unsaved request?")) {
+                  setDirty(false);
+                  setError("");
+                  go("Guardrail", "repository");
+                }
+              }}
+              onSave={(item) => {
+                try {
+                  updateState((latest) => addEntity(latest, item, role));
+                  setDirty(false);
+                  setError("");
+                  setNotice(
+                    "Request submitted! Your Guardrail is waiting for implementation.",
+                  );
+                  setResultLink({
+                    kind: "Guardrail",
+                    view: "repository",
+                    id: item.id,
+                    label: "Guardrail Details",
+                  });
+                  go("Guardrail", "repository");
+                } catch (error) {
+                  setError((error as Error).message);
+                }
               }}
             />
-          </>
-        ) : view === "logs" ? (
+          </section>
+        ) : fullDetail ? (
+          <section className="nm-card nm-padding nm-full-detail">
+            {detail}
+          </section>
+        ) : isBlank ? null : view === "dashboard" ? (
           <>
-            <div className="nm-tabs">
-              {["Audit Log", "Detection Log"].map((t) => (
-                <button
-                  className={logType === t ? "active" : ""}
-                  key={t}
-                  onClick={() => setLogType(t)}
-                >
-                  {t}
-                </button>
-              ))}
-            </div>
-            <ActivityLogs
-              key={logType}
-              state={state}
+            {role === "IT Admin" && (
+              <div className="nm-card nm-padding mb-4">
+                <Select
+                  label="Control Unit"
+                  value={unit}
+                  options={["All", ...controlUnits]}
+                  onChange={setUnit}
+                />
+              </div>
+            )}
+            <ProtectionSummary
               scans={scans}
-              type={logType}
+              profiles={activeProfiles.length}
+              guardrails={state.entities.filter(
+                (g) => g.kind === "Guardrail" && g.deployed !== null &&
+                  ((role === "IT Admin" && unit === "All") ||
+                    activeProfiles.some((p) => p.deployedRefs.includes(g.id))),
+              ).length}
+              onNewGuardrail={canAuthor(role) ? () => go("Guardrail", "request") : undefined}
+            />
+            {enforcementList}
+          </>
+        ) : view === "enforce" ? enforcementList : view === "deploy" ? (
+          <>
+            <section className="nm-card">{filters}</section>
+            <DeploymentQueues
+              items={rows}
+              kind={kind}
+              role={role}
+              onOpen={(id) => go(kind, "deploy", id)}
             />
           </>
         ) : (
@@ -700,6 +936,19 @@ export function NmgrApp() {
               </div>
             )}
             {!isStudio && filters}
+            {showRepositoryCreate && (
+              <div className="nm-repository-create">
+                <Button
+                  onClick={() =>
+                    kind === "Guardrail"
+                      ? go("Guardrail", "request")
+                      : open("create")
+                  }
+                >
+                  <Plus size={16} /> New {kind}
+                </Button>
+              </div>
+            )}
             <section className="nm-card">
               {isStudio && filters}
               <div className="nm-card-head">
@@ -713,10 +962,14 @@ export function NmgrApp() {
                   <thead>
                     <tr>
                       <th>{kind}</th>
-                      <th>{view === "operations" ? "Mode" : "Status"}</th>
+                      <th>
+                        {["operations", "enforce"].includes(view)
+                          ? "Mode"
+                          : "Status"}
+                      </th>
                       <th>Ctrl Unit</th>
                       <th>Last Modified</th>
-                      <th>Action</th>
+                      {view !== "repository" && <th>Action</th>}
                     </tr>
                   </thead>
                   <tbody>
@@ -726,7 +979,7 @@ export function NmgrApp() {
                           <td>
                             <div
                               className={
-                                view === "operations"
+                                ["operations", "enforce"].includes(view)
                                   ? "nm-profile-identity"
                                   : undefined
                               }
@@ -755,13 +1008,27 @@ export function NmgrApp() {
                               <div>
                                 <div
                                   className={
-                                    view === "operations"
+                                    ["operations", "enforce"].includes(view)
                                       ? "nm-profile-title"
                                       : undefined
                                   }
                                 >
-                                  <strong>{item.name}</strong>
-                                  {view === "operations" && (
+                                  <strong>
+                                    {view === "repository" ? (
+                                      <a
+                                        className="nm-entity-name-link"
+                                        href={`#${kind}/${view}/${item.id}`}
+                                        onClick={(event) => {
+                                          if (event.ctrlKey || event.metaKey || event.shiftKey || event.altKey) return;
+                                          event.preventDefault();
+                                          go(kind, view, item.id);
+                                        }}
+                                      >
+                                        {item.name}
+                                      </a>
+                                    ) : item.name}
+                                  </strong>
+                                  {["operations", "enforce"].includes(view) && (
                                     <span className="nm-profile-alert-counts">
                                       {(["critical", "warning"] as const).map(
                                         (level) => (
@@ -780,25 +1047,21 @@ export function NmgrApp() {
                                     </span>
                                   )}
                                 </div>
-                                <small>
-                                  ID: {item.id} · Deployed Ver.:{" "}
-                                  {version(item.deployed)} ·{" "}
-                                  {kind === "Guardrail"
-                                    ? `${state.entities.filter((p) => p.deployed !== null && p.deployedRefs.includes(item.id)).length} Active Profile Refs.`
-                                    : `${item.refs.length} Guardrails Set`}
-                                </small>
+                                <EntitySummary item={item} state={state} />
                               </div>
                             </div>
                           </td>
                           <td>
                             <Badge>
-                              {view === "operations" ? item.mode : item.status}
+                              {["operations", "enforce"].includes(view)
+                                ? item.mode
+                                : item.status}
                             </Badge>
                           </td>
                           <td>{item.unit}</td>
                           <td>{stamp(item.updated)}</td>
-                          <td>
-                            {view === "operations" ? (
+                          {view !== "repository" && <td>
+                            {["operations", "enforce"].includes(view) ? (
                               <div className="nm-select">
                                 <select
                                   aria-label={`Mode for ${item.name}`}
@@ -838,18 +1101,18 @@ export function NmgrApp() {
                                 onClick={() => go(kind, view, item.id)}
                               >
                                 {view === "tests"
-                                  ? item.status === "TEST READY"
+                                  ? item.status === "TEST READY" &&
+                                    allowed(item, "test-pass", role)
                                     ? "Go Test"
                                     : "View"
-                                  : view === "signoff"
+                                  : view === "signoff" &&
+                                      allowed(item, "approve", role)
                                     ? "Sign off"
-                                    : view === "deploy"
-                                      ? "Go Deploy"
-                                      : "View"}
+                                    : "View"}
                                 <ChevronRight size={14} />
                               </Button>
                             )}
-                          </td>
+                          </td>}
                         </tr>
                         {view === "operations" &&
                           expandedProfiles.includes(item.id) && (
@@ -880,11 +1143,7 @@ export function NmgrApp() {
                 </table>
               </div>
               {!rows.length && (
-                <div className="nm-empty">
-                  {view === "deploy" && !search
-                    ? "All signed-off revisions are deployed, or awaiting sign-off."
-                    : "No matching records."}
-                </div>
+                <div className="nm-empty">No matching records.</div>
               )}
               <footer className="nm-pagination">
                 <span>
@@ -914,29 +1173,19 @@ export function NmgrApp() {
                 </Button>
               </footer>
             </section>
+            {view === "signoff" && role === "User Admin" && (
+              <OperationHistory
+                key={kind}
+                state={state}
+                kind={kind}
+                controlUnit={controlUnit}
+                actor={actorNames[role]}
+                onOpen={(id) => go(kind, "signoff", id)}
+              />
+            )}
           </>
         )}
       </NmgrShell>
-      {notification.message &&
-        createPortal(
-          <div
-            key={notification.id}
-            className="nm-notice"
-            role="status"
-            aria-live="polite"
-            aria-atomic="true"
-          >
-            <span>{notification.message}</span>
-            <button
-              type="button"
-              aria-label="Dismiss notification"
-              onClick={() => setNotice("")}
-            >
-              <X size={16} aria-hidden="true" />
-            </button>
-          </div>,
-          document.body,
-        )}
       <Sheet
         open={!!monitoringGuardrail}
         onOpenChange={(value) => {
@@ -967,7 +1216,13 @@ export function NmgrApp() {
         </ResizableSheetContent>
       </Sheet>
       <Sheet
-        open={!!e && !["dashboard", "logs"].includes(view)}
+        open={
+          !!e &&
+          !fullDetail &&
+          !isBlank &&
+          view !== "dashboard" &&
+          view !== "request"
+        }
         onOpenChange={(value) => {
           if (!value && !modal && !monitorGuardrail) go(kind, view);
         }}
@@ -980,127 +1235,34 @@ export function NmgrApp() {
             <SheetTitle className="text-xl">{e?.name}</SheetTitle>
           </div>
           <div className="nm-detail-scroll overflow-y-auto px-6 py-5">
-            {e && (
-              <>
-                <Button variant="ghost" onClick={() => go(kind, view)}>
-                  <ArrowLeft size={16} />
-                  Back to {title}
-                </Button>
-                <div className="nm-detail-head">
-                  <div>
-                    <Badge>{e.status}</Badge>
-                    <p className="nm-muted">
-                      ID: {e.id} · Deployed Ver.: {version(e.deployed)} ·{" "}
-                      {e.kind === "Guardrail"
-                        ? `${state.entities.filter((p) => p.deployed !== null && p.deployedRefs.includes(e.id)).length} Active Profile Refs.`
-                        : `${e.refs.length} Guardrails Set`}
-                    </p>
-                  </div>
-                  <div className="nm-actions">
-                    {(
-                      [
-                        "implement",
-                        "request",
-                        "approve",
-                        "reject",
-                        "deploy",
-                        "revise",
-                      ] as Action[]
-                    )
-                      .filter((a) => allowed(e, a, role))
-                      .map((a) => (
-                        <Button
-                          key={a}
-                          variant={
-                            ["reject", "revise"].includes(a)
-                              ? "outline"
-                              : "default"
-                          }
-                          onClick={() => open(a)}
-                        >
-                          {
-                            {
-                              implement: "Mark implemented",
-                              request: "Request Signoff",
-                              approve: "Approve",
-                              reject: "Reject",
-                              deploy: "Go Deploy",
-                              revise: "Modify",
-                            }[a as "implement"]
-                          }
-                        </Button>
-                      ))}
-                    {allowed(e, "test-pass", role) && (
-                      <Button
-                        onClick={() =>
-                          view === "tests"
-                            ? open("test-pass")
-                            : go(kind, "tests", e.id)
-                        }
-                      >
-                        <FlaskConical size={16} />
-                        {view === "tests" ? "Run Test" : "Go Test"}
-                      </Button>
-                    )}
-                  </div>
-                </div>
-                <WorkflowSteps item={e} />
-                <div className="nm-actions nm-detail-secondary-actions">
-                  {canAuthor(role) &&
-                    [
-                      "DRAFT",
-                      "TEST READY",
-                      "TEST FAILED",
-                      "TEST PASSED",
-                    ].includes(e.status) && (
-                      <Button variant="outline" onClick={() => open("edit")}>
-                        Edit requirements
-                      </Button>
-                    )}
-                  {allowed(e, "withdraw", role) && (
-                    <Button variant="outline" onClick={() => open("withdraw")}>
-                      Withdraw
-                    </Button>
-                  )}
-                </div>
-                {view === "tests" ? (
-                  runs(e)
-                ) : (
-                  <>
-                    <div className="nm-tabs">
-                      {[
-                        "Info",
-                        "Tests",
-                        ...(e.kind === "Profile" && e.deployed !== null
-                          ? ["Monitoring"]
-                          : []),
-                      ].map((t) => (
-                        <button
-                          className={tab === t ? "active" : ""}
-                          onClick={() => setTab(t)}
-                          key={t}
-                        >
-                          {t === "Info" ? `${kind} Info` : t}
-                        </button>
-                      ))}
-                    </div>
-                    {tab === "Tests" ? (
-                      runs(e)
-                    ) : tab === "Monitoring" ? (
-                      <ProfileMonitoring
-                        key={e.id}
-                        profile={e}
-                        state={state}
-                        onGuardrail={setMonitorGuardrail}
-                      />
-                    ) : (
-                      info(e)
-                    )}
-                  </>
-                )}
-              </>
-            )}
+            {detail}
           </div>
+        </ResizableSheetContent>
+      </Sheet>
+      <Sheet open={reviewTests && !!e} onOpenChange={setReviewTests}>
+        <ResizableSheetContent
+          aria-describedby={undefined}
+          className="nm-app nm-drawer bg-white overflow-y-auto p-6 data-[side=right]:sm:max-w-[700px]"
+        >
+          <SheetTitle>Guardrail Test Records</SheetTitle>
+          {e && (
+            <>
+              <h3>{e.name}</h3>
+              <p className="nm-muted">
+                Review test reports for the current revision.
+              </p>
+              {runs(e)}
+              <Button
+                disabled={!allowed(e, "request", role)}
+                onClick={() => {
+                  setReviewTests(false);
+                  open("request");
+                }}
+              >
+                Request Signoff
+              </Button>
+            </>
+          )}
         </ResizableSheetContent>
       </Sheet>
       <Sheet
@@ -1133,8 +1295,14 @@ export function NmgrApp() {
                       : modal === "test-pass"
                         ? `Run ${kind} Test`
                         : modal === "implement"
-                          ? "Implemented Policies"
-                          : `${modal ?? ""} ${e?.kind ?? ""}`}
+                          ? `Configure ${kind}`
+                          : modal === "request"
+                            ? `Raise ${kind} Signoff Request`
+                            : modal === "approve" || modal === "reject"
+                              ? `Sign-off ${kind}`
+                              : modal === "deploy"
+                                ? `Deploy ${kind}`
+                                : `${modal ?? ""} ${e?.kind ?? ""}`}
           </SheetTitle>
           <SheetDescription>
             {modal === "create"
@@ -1174,26 +1342,30 @@ export function NmgrApp() {
             <CreateForm
               kind={kind}
               revision={modal === "revise"}
-              allowTechnical={role === "Admin"}
+              allowTechnical={false}
               onCancel={closeModal}
               state={state}
-              owner={owner}
+              owner={actorNames[role]}
+              lockedUnit={controlUnit}
               onDirty={() => setDirty(true)}
               initial={modal === "edit" || modal === "revise" ? e : undefined}
               onSave={(item) => {
                 try {
-                  setState(
+                  updateState((latest) =>
                     modal === "revise"
-                      ? reviseEntity(state, item, role, owner)
+                      ? reviseEntity(latest, item, role, actorNames[role])
                       : modal === "edit"
-                        ? editEntity(state, item, role)
-                        : addEntity(state, item),
+                        ? editEntity(latest, item, role)
+                        : addEntity(latest, item, role),
                   );
                   setModal(null);
                   setDirty(false);
+                  go(item.kind, "repository", item.id);
                   setNotice(
                     modal === "revise"
-                      ? "New revision saved. The deployed version remains active; test and sign off this revision before deploying."
+                      ? item.kind === "Profile"
+                        ? "New revision saved. Request sign-off to make it active."
+                        : "New revision saved. The deployed version remains active until the new revision is tested, approved and deployed."
                       : "Changes saved successfully.",
                   );
                 } catch (x) {
@@ -1215,7 +1387,7 @@ export function NmgrApp() {
               <p>
                 {report.passed
                   ? "Acceptance checks passed."
-                  : "Personal identifiers remained visible in two demo responses. Withdraw for technical review or run another test."}
+                  : "Personal identifiers remained visible in two demo responses. Tech Implementor can review the configuration and run another test."}
               </p>
               <small>
                 Simulated Demo result; no inference service was called.
@@ -1224,7 +1396,7 @@ export function NmgrApp() {
           ) : modal === "reset" ? (
             <Button
               onClick={() => {
-                setState(seed());
+                updateState(() => seed());
                 setSelected("");
                 setModal(null);
                 setNotice("Demo workspace reset.");
@@ -1238,18 +1410,64 @@ export function NmgrApp() {
               <div className="nm-callout">
                 <strong>{e.name}</strong>
                 <p>
-                  {e.id} · Target {version(e.version)} · Base{" "}
+                  Target {version(e.version)} · Base{" "}
                   {version(e.deployed)}
                 </p>
                 <small>
-                  Control Unit: {e.unit} · Jurisdiction: {e.location} ·
+                  Control Unit: {e.unit} · Location: {e.location} ·
                   Approver: {e.approver}
                 </small>
               </div>
-              {modal === "implement" && (
+              {modal === "request" && (
+                <>
+                  <p>Requestor: {actorNames[role]}</p>
+                  <Select
+                    label="Sign-Off Approver"
+                    value={signoffApprover}
+                    options={[
+                      ...new Set([
+                        signoffApprover,
+                        "Feng ZONG",
+                        "Narandra",
+                        "Rajesh",
+                        "Matthew",
+                      ]),
+                    ]}
+                    onChange={(value) => {
+                      setSignoffApprover(value);
+                      setDirty(true);
+                    }}
+                  />
+                </>
+              )}
+              {["request", "approve", "reject", "deploy"].includes(
+                modal ?? "",
+              ) &&
+                e.kind === "Guardrail" && (
+                  <p>
+                    Last current test passed:{" "}
+                    {e.runs.find(
+                      (run) =>
+                        run.passed &&
+                        run.version === e.version &&
+                        run.configurationRevision === e.configurationRevision,
+                    )?.end
+                      ? stamp(
+                          e.runs.find(
+                            (run) =>
+                              run.passed &&
+                              run.version === e.version &&
+                              run.configurationRevision ===
+                                e.configurationRevision,
+                          )!.end,
+                        )
+                      : "None"}
+                  </p>
+                )}
+              {modal === "implement" && e.kind === "Guardrail" && (
                 <>
                   <label>
-                    Policies (one per line)
+                    Requirement
                     <Textarea
                       value={policies}
                       onChange={(x) => {
@@ -1269,14 +1487,56 @@ export function NmgrApp() {
                   />
                 </>
               )}
+              {modal === "implement" && e.kind === "Profile" && (
+                <div className="nm-callout">
+                  <p>Configure the deployed Guardrails and alert threshold.</p>
+                  {state.entities
+                    .filter(
+                      (g) => g.kind === "Guardrail" && g.deployed !== null,
+                    )
+                    .map((g) => (
+                      <label className="nm-check" key={g.id}>
+                        <input
+                          type="checkbox"
+                          checked={configurationRefs.includes(g.id)}
+                          onChange={(event) => {
+                            setConfigurationRefs(
+                              event.target.checked
+                                ? [...configurationRefs, g.id]
+                                : configurationRefs.filter((id) => id !== g.id),
+                            );
+                            setDirty(true);
+                          }}
+                        />
+                        {g.name}
+                      </label>
+                    ))}
+                  <label>
+                    Alert threshold (%)
+                    <Input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="any"
+                      value={configurationThreshold}
+                      onChange={(event) => {
+                        setConfigurationThreshold(event.target.value);
+                        setDirty(true);
+                      }}
+                    />
+                  </label>
+                  <p>
+                    {e.location} · {e.attributes.bu} · {e.attributes.agent}
+                  </p>
+                </div>
+              )}
               {modal === "test-pass" && (
                 <>
                   <Select
                     label="Dataset"
                     value={dataset}
                     options={[
-                      "PII acceptance suite",
-                      "LangSmith sample (Demo)",
+                      `${e.name} acceptance suite`,
                       ...(dataset.startsWith("Uploaded:") ? [dataset] : []),
                     ]}
                     onChange={(v) => {
@@ -1285,9 +1545,15 @@ export function NmgrApp() {
                     }}
                   />
                   <label>
-                    Upload custom dataset (JSON array of test cases)
+                    Upload Custom Dataset (JSON Array of Test Cases)
+                    <span className="nm-file-picker">
+                      <span className="nm-file-picker-button" aria-hidden="true">Choose File</span>
+                      <span className="nm-file-picker-name" aria-hidden="true">
+                        {dataset.startsWith("Uploaded:") ? dataset.slice("Uploaded: ".length) : "No file chosen"}
+                      </span>
                     <Input
                       type="file"
+                      aria-label="Upload Custom Dataset (JSON Array of Test Cases)"
                       accept=".json"
                       onChange={async (x) => {
                         try {
@@ -1318,6 +1584,7 @@ export function NmgrApp() {
                         }
                       }}
                     />
+                    </span>
                   </label>
                   <p>{cases} acceptance cases · simulated locally</p>
                   <label className="nm-check">
@@ -1356,22 +1623,7 @@ export function NmgrApp() {
                       Profile revision.
                     </p>
                   )}
-                  <label className="nm-check">
-                    <input
-                      type="checkbox"
-                      checked={fail}
-                      onChange={(x) => setFail(x.target.checked)}
-                    />
-                    Demonstrate deployment failure
-                  </label>
                 </>
-              )}
-              {modal === "withdraw" && (
-                <p>
-                  Withdraw invalidates current test evidence and sign-off.
-                  Historical test records are kept. The deployed version
-                  continues protecting traffic.
-                </p>
               )}
               {["Normal", "Pass all", "Block all"].includes(modal ?? "") && (
                 <p>
@@ -1424,14 +1676,19 @@ function locationHash(): [Kind, View, string] {
     k === "Profile" ? "Profile" : "Guardrail",
     [
       "repository",
+      "request",
       "tests",
       "signoff",
       "deploy",
       "dashboard",
       "operations",
       "logs",
+      "enforce",
+      "audit",
     ].includes(v ?? "")
-      ? (v as View)
+      ? v === "logs"
+        ? "audit"
+        : (v as View)
       : "repository",
     decodeId(id ?? ""),
   ];
@@ -1445,8 +1702,10 @@ function CreateForm({
   onDirty,
   revision = false,
   allowTechnical = false,
+  lockedUnit,
   onCancel,
 }: {
+  lockedUnit?: string;
   revision?: boolean;
   allowTechnical?: boolean;
   onCancel: () => void;
@@ -1468,15 +1727,22 @@ function CreateForm({
       : (initial?.config?.versionName ?? `v${initial?.version ?? 1}`),
   }));
   const [guardQuery, setGuardQuery] = useState("");
+  const [approver, setApprover] = useState(
+    initial?.approver && initial.approver !== "User Admin"
+      ? initial.approver
+      : "Feng ZONG",
+  );
   const [name, setName] = useState(initial?.name ?? "");
-  const [id, setId] = useState(initial?.id ?? "");
+  const [id] = useState(() => initial?.id ?? `${kind === "Profile" ? "pf" : "gr"}-${crypto.randomUUID()}`);
   const [description, setDescription] = useState(initial?.description ?? "");
-  const [unit, setUnit] = useState(initial?.unit ?? "ISS");
+  const [unit, setUnit] = useState(initial?.unit ?? lockedUnit ?? "ISS");
   const [location, setLocation] = useState(initial?.location ?? "ALL");
   const [mandatory, setMandatory] = useState(initial?.mandatory ?? false);
   const [profileThreshold, setProfileThreshold] = useState(
-    String(initial?.threshold ?? 5),
+    String(initial?.threshold ?? 10),
   );
+  const [thresholdMetric, setThresholdMetric] = useState<NonNullable<Entity["thresholdMetric"]>>(initial?.thresholdMetric ?? (initial ? "Error Rate" : "Block Rate"));
+  const [thresholdWindow, setThresholdWindow] = useState(String(initial?.thresholdWindow ?? 5));
   const [refs, setRefs] = useState<string[]>(initial?.refs ?? []);
   const [bu, setBu] = useState(initial?.attributes.bu ?? "ALL");
   const [agent, setAgent] = useState(initial?.attributes.agent ?? "ALL");
@@ -1493,7 +1759,8 @@ function CreateForm({
     .map((g) => g.id);
   return (
     <form
-      className="nm-form"
+      noValidate
+      className={`nm-form nm-create-form nm-create-${kind.toLowerCase()}`}
       onChange={onDirty}
       onSubmit={(ev) => {
         ev.preventDefault();
@@ -1519,8 +1786,8 @@ function CreateForm({
           location,
           mandatory,
           custodian: initial?.custodian ?? owner,
-          approver: "Feng ZONG",
-          status: kind === "Guardrail" ? "DRAFT" : "TEST READY",
+          approver,
+          status: "DRAFT",
           version: 1,
           deployed: null,
           updated: new Date().toISOString(),
@@ -1541,7 +1808,8 @@ function CreateForm({
           attributes: { bu, agent, data },
           runs: [],
           mode: "Normal",
-          threshold: Number(profileThreshold),
+          threshold: profileThreshold.trim() ? Number(profileThreshold) : NaN,
+          ...(kind === "Profile" ? { thresholdMetric, thresholdWindow: thresholdWindow.trim() ? Number(thresholdWindow) : NaN } : {}),
         });
       }}
     >
@@ -1549,7 +1817,9 @@ function CreateForm({
         <p className="nm-callout">
           Save as v{(initial?.version ?? 0) + 1}.0. Deployed v
           {initial?.deployed}.0 stays active until the new revision passes
-          testing, sign-off and deployment.
+          {kind === "Profile"
+            ? "sign-off."
+            : "testing, sign-off and deployment."}
         </p>
       )}
       <label>
@@ -1560,82 +1830,44 @@ function CreateForm({
           onChange={(x) => setName(x.target.value)}
         />
       </label>
+
       <label>
-        {kind} ID (unique)
-        <Input
-          required
-          disabled={!!initial}
-          value={id}
-          onChange={(x) => setId(x.target.value)}
-          placeholder={kind === "Guardrail" ? "gr-pii-sg" : "pf-remittance"}
-        />
-      </label>
-      <label>
-        Description
+        {kind === "Guardrail" ? "Business Intents" : "Use Case"}
         <Textarea
           required
           value={description}
           onChange={(x) => setDescription(x.target.value)}
         />
       </label>
-      <div className="nm-form-grid">
-        <Select
-          label="Control Unit"
-          value={unit}
-          options={controlUnits}
-          onChange={setUnit}
-        />
-        <Select
-          label="Jurisdiction"
-          value={location}
-          options={["ALL", "SG", "CN", "IN", "ID", "HK", "TW"]}
-          onChange={setLocation}
-        />
-      </div>
-      <div className="nm-facts">
-        <div>
-          <small>Custodian</small>
-          {initial?.custodian ?? owner}
-        </div>
-        <div>
-          <small>Sign-Off Approver</small>Feng ZONG
-        </div>
-      </div>
-      {kind === "Guardrail" ? (
-        <>
-          <label className="nm-check">
-            <input
-              type="checkbox"
-              checked={mandatory}
-              onChange={(x) => setMandatory(x.target.checked)}
-            />
-            Mandatory
+      <div className="nm-create-fields">
+        {lockedUnit ? (
+          <label>
+            Control Unit
+            <Input value={unit} readOnly />
           </label>
-          {initial && allowTechnical && (
-            <section className="nm-configuration">
-              <h3>Technical configuration</h3>
-              <label>
-                Policies (one per line)
-                <Textarea
-                  value={policyText}
-                  onChange={(e) => setPolicyText(e.target.value)}
-                />
-              </label>
-              <UnifiedConfigForm
-                config={config}
-                sources={[]}
-                onSources={() => {}}
-                onChange={(value) => {
-                  setConfig(value);
-                  onDirty();
-                }}
-              />
-            </section>
-          )}
-        </>
-      ) : (
-        <>
-          <div className="nm-form-grid">
+        ) : (
+          <Select
+            label="Control Unit"
+            value={unit}
+            options={controlUnits}
+            onChange={setUnit}
+          />
+        )}
+          <Select
+            label="Sign-Off Approver"
+            value={approver}
+            options={[
+              ...new Set([
+                approver,
+                "Feng ZONG",
+                "Narandra",
+                "Rajesh",
+                "Matthew",
+              ]),
+            ]}
+            onChange={setApprover}
+          />
+        {kind === "Profile" && <>
             <Select
               label="BU/SU"
               value={bu}
@@ -1661,22 +1893,64 @@ function CreateForm({
               options={["Personal", "Financial", "No Sensitive Data"]}
               onChange={setData}
             />
-          </div>
-          <label>
-            Alert threshold (%)
-            <Input
-              type="number"
-              required
-              min={0}
-              max={100}
-              step="any"
-              value={profileThreshold}
-              onChange={(e) => setProfileThreshold(e.target.value)}
+        </>}
+        <Select
+          label="Location"
+          value={location}
+          options={["ALL", "SG", "CN", "IN", "ID", "HK", "TW"]}
+          onChange={setLocation}
+        />
+      </div>
+      {kind === "Guardrail" ? (
+        <>
+          <label className="nm-check">
+            <input
+              type="checkbox"
+              checked={mandatory}
+              onChange={(x) => setMandatory(x.target.checked)}
             />
-            <small>
-              Alert when the scanner error percentage exceeds this value.
-            </small>
+            Mandatory
           </label>
+          {initial && allowTechnical && (
+            <section className="nm-configuration">
+              <h3>Technical Configuration</h3>
+              <label>
+                Requirement
+                <Textarea
+                  value={policyText}
+                  onChange={(e) => setPolicyText(e.target.value)}
+                />
+              </label>
+              <UnifiedConfigForm
+                config={config}
+                sources={[]}
+                onSources={() => {}}
+                onChange={(value) => {
+                  setConfig(value);
+                  onDirty();
+                }}
+              />
+            </section>
+          )}
+        </>
+      ) : (
+        <>
+          <fieldset className="nm-threshold">
+            <legend>Alert Threshold</legend>
+            <div className="nm-threshold-rule">
+              <span>Trigger SLO breach alert if</span>
+              <select aria-label="Alert Metric" value={thresholdMetric} onChange={(event) => setThresholdMetric(event.target.value as NonNullable<Entity["thresholdMetric"]>)}>
+                <option>Block Rate</option>
+                <option>Pass Rate</option>
+                {initial && <option>Error Rate</option>}
+              </select>
+              <span>exceeds</span>
+              <Input aria-label="Alert Threshold (%)" type="number" min={0} max={100} step="any" value={profileThreshold} onChange={(event) => setProfileThreshold(event.target.value)} />
+              <span>% in last</span>
+              <Input aria-label="Alert Window (Minutes)" type="number" min={1} step={1} value={thresholdWindow} onChange={(event) => setThresholdWindow(event.target.value)} />
+              <span>minutes.</span>
+            </div>
+          </fieldset>
           <fieldset className="space-y-3">
             <legend className="font-medium">Guardrails</legend>
             <p className="text-xs text-muted-foreground">
@@ -1698,6 +1972,7 @@ function CreateForm({
               value={guardQuery}
               onChange={(e) => setGuardQuery(e.target.value)}
             />
+            <div className="nm-guardrail-picker-list" role="region" aria-label="Available Guardrails" tabIndex={0}>
             {guards
               .filter((g) =>
                 `${g.name} ${g.id}`
@@ -1705,7 +1980,7 @@ function CreateForm({
                   .includes(guardQuery.toLowerCase()),
               )
               .map((g) => (
-                <div key={g.id} className="rounded-lg border p-3">
+                <div key={g.id} className="nm-guardrail-picker-card rounded-lg border p-3">
                   <label className="nm-check">
                     <input
                       type="checkbox"
@@ -1723,7 +1998,7 @@ function CreateForm({
                     {required.includes(g.id) && <Badge>Mandatory</Badge>}
                   </label>
                   <p className="text-xs text-muted-foreground">
-                    {g.id} · Deployed v{version(g.deployed)} ·{" "}
+                    Deployed v{version(g.deployed)} ·{" "}
                     {g.policies.length} Policies
                   </p>
                   <details className="mt-2 text-xs">
@@ -1738,6 +2013,7 @@ function CreateForm({
                   </details>
                 </div>
               ))}
+            </div>
           </fieldset>
         </>
       )}
@@ -1752,9 +2028,9 @@ function CreateForm({
         </Button>
         <Button type="submit">
           {revision
-            ? "Save as new version"
+            ? "Save As New Version"
             : initial
-              ? "Save changes"
+              ? "Save Changes"
               : "Submit"}
         </Button>
       </div>

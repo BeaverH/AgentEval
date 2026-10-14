@@ -1,196 +1,178 @@
 import { describe, expect, it } from "vitest";
-import { seed, transition, addEntity, editEntity, reviseEntity } from "./model";
-describe("NMGR prototype lifecycle", () => {
-  it("requires tests and sign-off before deployment, preserving deployed version while revising", () => {
-    let s = seed();
-    const id = "gr-pii-sg";
-    expect(() => transition(s, id, "deploy", "Deployer")).toThrow();
-    s = transition(s, id, "implement", "Tech", {
-      policies: ["Mask personal identifiers"],
-    });
-    s = transition(s, id, "test-fail", "Custodian", {
-      dataset: "PII",
-      cases: 5,
-    });
-    expect(() => transition(s, id, "request", "Custodian")).toThrow();
-    s = transition(s, id, "test-pass", "Custodian", {
-      dataset: "PII",
-      cases: 5,
-    });
-    s = transition(s, id, "request", "Custodian");
-    expect(() => transition(s, id, "approve", "Custodian")).toThrow();
-    s = transition(s, id, "approve", "Approver");
-    s = transition(s, id, "deploy", "Deployer");
-    s = transition(s, id, "revise", "Custodian");
-    expect(s.entities.find((e) => e.id === id)).toMatchObject({
-      deployed: 1,
-      version: 2,
-      status: "DRAFT",
-    });
-    expect(s.entities.find((e) => e.id === id)!.runs).toHaveLength(2);
-    expect(() => transition(s, id, "request", "Custodian")).toThrow();
-  });
-  it("rejects duplicate ids and requires a deployed Guardrail for profiles", () => {
-    const s = seed();
-    expect(() => addEntity(s, s.entities[0]!)).toThrow("taken");
-    const p = s.entities.find((e) => e.kind === "Profile")!;
-    expect(() =>
-      addEntity(s, { ...p, id: "new-profile", refs: ["gr-pii-sg"] }),
-    ).toThrow("deployed");
-  });
-  it("invalidates evidence on edit and forces rejected requests back through tests", () => {
-    let s = seed();
-    const id = "gr-risk-review";
-    s = transition(s, id, "reject", "Approver", {
-      reason: "Recheck data coverage",
-    });
-    expect(() => transition(s, id, "request", "Custodian")).toThrow();
-    const current = s.entities.find((e) => e.id === "gr-customer-support")!;
-    s = editEntity(
-      s,
-      { ...current, description: "Changed requirements" },
-      "Custodian",
-    );
-    expect(s.entities.find((e) => e.id === current.id)).toMatchObject({
-      status: "DRAFT",
-    });
-  });
-  it("only allows operators to change deployed profiles and preserves deployed references", () => {
-    let s = seed();
-    expect(() => transition(s, "pf-pii-sg", "Block all", "Operator")).toThrow();
-    expect(() =>
-      transition(s, "pf-pii-all", "Block all", "Custodian"),
-    ).toThrow();
-    s = transition(s, "pf-pii-all", "Block all", "Operator");
-    s = transition(s, "pf-pii-all", "revise", "Custodian");
-    expect(s.entities.find((e) => e.id === "pf-pii-all")).toMatchObject({
-      deployed: 1,
-      mode: "Block all",
-      deployedRefs: ["gr-pii-all"],
-    });
-  });
-  it("validates profile deployment threshold and logs successful actions only", () => {
-    const s = seed();
-    expect(() =>
-      transition(s, "pf-financial-advice", "deploy", "Deployer", {
-        threshold: 101,
-      }),
-    ).toThrow();
-    const next = transition(s, "pf-financial-advice", "deploy", "Deployer", {
-      threshold: 5,
-    });
-    expect(next.audit).toHaveLength(s.audit.length + 1);
-    expect(next.audit[0]!.action).toBe("deploy");
-  });
-});
-
-import { roleForOwner, allowed } from "./model";
-it("keeps account choices usable without bypassing lifecycle gates", () => {
+import {
+  seed,
+  transition,
+  addEntity,
+  editEntity,
+  reviseEntity,
+  allowed,
+  accounts,
+  canAuthor,
+  type Kind,
+  type State,
+} from "./model";
+const test = { dataset: "Acceptance", cases: 24 };
+function draft(kind: Kind) {
   const state = seed();
-  const draft = state.entities.find((e) => e.id === "gr-pii-sg")!;
-  expect(allowed(draft, "deploy", roleForOwner("Admin"))).toBe(false);
-  expect(allowed(draft, "implement", roleForOwner("Admin"))).toBe(true);
-  expect(allowed(draft, "implement", roleForOwner("ISS"))).toBe(false);
-  const active = state.entities.find((e) => e.id === "pf-pii-all")!;
-  expect(allowed(active, "Block all", roleForOwner("ISS"))).toBe(true);
-});
-it("profiles reference Guardrails, keep their Policies nested, and require mandatory bindings", () => {
-  const s = seed();
-  const p = s.entities.find((e) => e.kind === "Profile")!;
-  const guard = s.entities[0]!;
-  expect(() =>
-    addEntity(s, {
-      ...p,
-      id: "profile-invalid-policy",
-      refs: [guard.policies[0]!],
-    }),
-  ).toThrow("deployed");
-  const optional = { ...guard, id: "optional-guard", mandatory: false };
-  const withOptional = { ...s, entities: [...s.entities, optional] };
-  expect(() =>
-    addEntity(withOptional, {
-      ...p,
-      id: "profile-missing-required",
-      refs: [optional.id],
-    }),
-  ).toThrow("mandatory");
-  const created = addEntity(withOptional, {
-    ...p,
-    id: "profile-composed",
-    refs: [guard.id, optional.id],
+  const item = state.entities.find((e) => e.kind === kind)!;
+  return { id: item.id, state: reviseEntity(state, item, "User") };
+}
+function configure(state: State, id: string) {
+  const e = state.entities.find((e) => e.id === id)!;
+  return transition(state, id, "implement", "IT Admin", {
+    policies: e.policies,
+    ...(e.config ? { config: e.config } : {}),
   });
-  expect(created.entities[0]!.refs).toEqual([guard.id, optional.id]);
-  expect(created.entities.find((e) => e.id === guard.id)!.policies).toEqual(
-    guard.policies,
-  );
-});
-
-it("keeps every run across versions, edits and withdrawal without reusing old evidence", () => {
-  let state = seed();
-  const id = "pf-pii-all";
-  const old = state.entities.find((e) => e.id === id)!;
-  state = reviseEntity(state, { ...old, name: "Revised profile" }, "Custodian");
-  let item = state.entities.find((e) => e.id === id)!;
-  expect(item).toMatchObject({
-    version: 2,
-    deployed: 1,
-    name: "Revised profile",
-    status: "TEST READY",
-  });
-  expect(item.runs).toEqual(old.runs);
-  expect(item.revisions?.[1]?.name).toBe(old.name);
-  expect(() => transition(state, id, "request", "Custodian")).toThrow();
-  for (let i = 0; i < 7; i++)
-    state = transition(state, id, "test-pass", "Custodian", {
-      dataset: "PII",
-      cases: 24,
+}
+describe.each(["Guardrail"] as Kind[])("%s role workflow", (kind) => {
+  it("requires technical testing, business request, approval and technical deployment", () => {
+    let { state, id } = draft(kind);
+    expect(state.entities.find((e) => e.id === id)?.status).toBe("DRAFT");
+    for (const role of accounts) {
+      expect(canAuthor(role)).toBe(role === "User");
+      expect(
+        allowed(
+          state.entities.find((e) => e.id === id)!,
+          "implement",
+          role,
+        ),
+      ).toBe(role === "IT Admin");
+      expect(() => transition(state, id, "deploy", role)).toThrow();
+    }
+    state = configure(state, id);
+    expect(() => transition(state, id, "test-pass", "User", test)).toThrow();
+    state = transition(state, id, "test-fail", "IT Admin", test);
+    expect(() => transition(state, id, "request", "User")).toThrow();
+    expect(() => transition(state, id, "test-pass", "User", test)).toThrow();
+    state = transition(state, id, "test-pass", "IT Admin", test);
+    expect(() => transition(state, id, "test-pass", "User", test)).toThrow();
+    expect(() => transition(state, id, "request", "IT Admin")).toThrow();
+    state = transition(state, id, "request", "User");
+    for (const role of accounts)
+      expect(
+        allowed(
+          state.entities.find((e) => e.id === id)!,
+          "test-pass",
+          role,
+        ),
+      ).toBe(false);
+    expect(() => transition(state, id, "approve", "User")).toThrow();
+    state = transition(state, id, "approve", "User Admin");
+    expect(() => transition(state, id, "deploy", "User Admin")).toThrow();
+    state = transition(state, id, "deploy", "IT Admin");
+    expect(state.entities.find((e) => e.id === id)).toMatchObject({
+      status: "DEPLOYED",
+      version: 2,
+      deployed: 2,
+      signedBy: "User Admin",
     });
-  item = state.entities.find((e) => e.id === id)!;
-  expect(item.runs).toHaveLength(8);
-  state = transition(state, id, "withdraw", "Custodian");
-  expect(state.entities.find((e) => e.id === id)!.runs).toHaveLength(8);
-  expect(() => transition(state, id, "request", "Custodian")).toThrow();
-  state = editEntity(
-    state,
-    {
-      ...state.entities.find((e) => e.id === id)!,
-      description: "Changed scope",
+  });
+  it.each(["edit", "withdraw", "reject", "reconfigure"])(
+    "invalidates technical evidence after %s while retaining history",
+    (action) => {
+      let { state, id } = draft(kind);
+      state = configure(state, id);
+      state = transition(state, id, "test-pass", "IT Admin", test);
+      if (action === "edit")
+        state = editEntity(
+          state,
+          {
+            ...state.entities.find((e) => e.id === id)!,
+            description: "Updated requirements",
+          },
+          "User",
+        );
+      if (action === "withdraw")
+        state = transition(state, id, "withdraw", "User");
+      if (action === "reject") {
+        state = transition(state, id, "request", "User");
+        state = transition(state, id, "reject", "User Admin", {
+          reason: "Review coverage",
+        });
+      }
+      if (action === "reconfigure") {
+        state = transition(state, id, "test-fail", "IT Admin", test);
+        state = configure(state, id);
+      }
+      if (["edit", "withdraw"].includes(action)) state = configure(state, id);
+      expect(
+        state.entities.find((e) => e.id === id)!.runs.length,
+      ).toBeGreaterThan(1);
+      expect(() => transition(state, id, "test-pass", "User", test)).toThrow();
+      expect(() => transition(state, id, "request", "User")).toThrow();
+      state = transition(state, id, "test-pass", "IT Admin", test);
+      expect(
+        allowed(
+          state.entities.find((e) => e.id === id)!,
+          "request",
+          "User",
+        ),
+      ).toBe(true);
     },
-    "Custodian",
   );
-  expect(state.entities.find((e) => e.id === id)!.runs).toHaveLength(8);
-  expect(() => transition(state, id, "request", "Custodian")).toThrow();
 });
-it("saves technical changes atomically while preserving the deployed Guardrail snapshot", () => {
+it("validates references, mandatory bindings, threshold and duplicate IDs", () => {
   const state = seed(),
-    old = state.entities.find((e) => e.id === "gr-pii-all")!;
-  const config = {
-    scannerType: "regex" as const,
-    direction: "response" as const,
-    content: "[",
-    versionName: "v2",
-    versionDescription: "Updated protection",
-  };
-  expect(() => reviseEntity(state, { ...old, config }, "Admin")).toThrow(
-    "regular expression",
-  );
-  expect(state.entities.find((e) => e.id === old.id)).toBe(old);
+    p = state.entities.find((e) => e.kind === "Profile")!,
+    g = state.entities[0]!;
+  expect(() => addEntity(state, p)).toThrow("taken");
+  expect(() =>
+    addEntity(state, { ...p, id: "new-profile", refs: ["missing"] }),
+  ).toThrow("deployed");
+  for (const threshold of [NaN, -1, 101])
+    expect(() =>
+      addEntity(state, { ...p, id: "new-profile", threshold }),
+    ).toThrow("threshold");
+  const mandatory = { ...g, mandatory: true };
+  expect(() =>
+    addEntity(
+      { ...state, entities: [mandatory, ...state.entities.slice(1)] },
+      { ...p, id: "new-profile", refs: [] },
+    ),
+  ).toThrow();
+  expect(() =>
+    addEntity(state, { ...p, id: "new-profile" }, "User Admin"),
+  ).toThrow("Only User");
+});
+it("preserves deployed snapshots and prevents business edits from changing technical configuration", () => {
+  const state = seed(),
+    old = state.entities[0]!;
   const next = reviseEntity(
     state,
     {
       ...old,
-      policies: ["New policy"],
-      config: { ...config, content: "test" },
+      config: { ...old.config!, content: "changed" },
+      policies: ["changed"],
     },
-    "Admin",
+    "User",
   );
   const item = next.entities.find((e) => e.id === old.id)!;
   expect(item).toMatchObject({
+    status: "DRAFT",
     version: 2,
     deployed: 1,
-    policies: ["New policy"],
-    config: { content: "test" },
+    config: old.config,
+    policies: old.policies,
   });
-  expect(item.revisions?.[1]?.policies).toEqual(old.policies);
+  expect(item.revisions?.[1]?.name).toBe(old.name);
   expect(item.runs).toEqual(old.runs);
+});
+
+it("activates Profiles on approval without technical testing or deployment", () => {
+  let { state, id } = draft("Profile");
+  for (const role of accounts)
+    for (const action of ["implement", "test-pass", "deploy"] as const)
+      expect(() => transition(state, id, action, role, test)).toThrow();
+  state = transition(state, id, "request", "User");
+  state = transition(state, id, "reject", "User Admin", {
+    reason: "Clarify scope",
+  });
+  expect(state.entities.find((e) => e.id === id)?.status).toBe("DRAFT");
+  state = transition(state, id, "request", "User");
+  state = transition(state, id, "approve", "User Admin");
+  expect(state.entities.find((e) => e.id === id)).toMatchObject({
+    status: "SIGNED OFF",
+    deployed: 2,
+    runs: [],
+  });
 });

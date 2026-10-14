@@ -17,14 +17,20 @@ export type Scan = {
   policyId?: string;
   policy?: string;
 };
-export function profileScans(profile: Entity, state: State): Scan[] {
+export function profileScans(profile: Entity, state: State, snapshotTime = Math.floor(Date.now() / 60_000) * 60_000): Scan[] {
   if (profile.deployed === null || profile.mode === "Pass all") return [];
-  const snapshotTime = Date.now();
+  const active = deployedEntity(profile);
+  const rateScenario = active.thresholdMetric === "Block Rate" || active.thresholdMetric === "Pass Rate";
+  const sampleCount = rateScenario ? 10 : 12;
   return profile.deployedRefs.flatMap((id, guardIndex) =>
-    Array.from({ length: 12 }, (_, i) => {
+    Array.from({ length: sampleCount }, (_, i) => {
       const result =
-        profile.mode === "Block all" || i === 2
+        profile.mode === "Block all"
           ? "Blocked"
+          : rateScenario
+            ? active.thresholdMetric === "Block Rate" && i < 9 ? "Blocked" : "Passed"
+          : i === 2
+            ? "Blocked"
           : i === 5
             ? "Detected"
             : i === 8
@@ -45,17 +51,10 @@ export function profileScans(profile: Entity, state: State): Scan[] {
         version: state.entities.find((g) => g.id === id)?.deployed ?? 1,
         result,
         latency: 45 + ((i * 31 + guardIndex * 73) % 450),
-        time: new Date(
-          Math.min(
-            snapshotTime,
-            Date.parse(
-              profile.deployedAt ??
-                profile.runs.find((r) => r.version === profile.deployed)?.end ??
-                "2026-10-12T00:00:00Z",
-            ) +
-              i * 30000,
-          ),
-        ).toISOString(),
+        // A rolling demo snapshot keeps the same samples in the current monitoring window.
+        time: new Date(snapshotTime - (rateScenario
+          ? (sampleCount - 1 - i) / (sampleCount - 1) * Math.max(0, (active.thresholdWindow ?? 5) - 1) * 60_000
+          : (11 - i) * 30_000)).toISOString(),
         input:
           result === "Passed"
             ? "Explain how to keep customer data private."
@@ -255,7 +254,7 @@ export function ProfileMonitoring({
                       }}
                     >
                       {expanded === row.id ? "▾" : "▸"}{" "}
-                      {row.guard?.name ?? row.id}
+                      {row.guard?.name ?? "Unavailable Guardrail"}
                     </button>
                     <small>v{row.guard?.deployed ?? "—"}.0</small>
                   </td>
@@ -347,7 +346,7 @@ export function ProfileMonitoring({
                                     },
                                   )}
                                 </span>
-                                <span>{s.id}</span>
+                                <span>Guardrail Check</span>
                                 <span
                                   className={`nm-outcome ${s.result.toLowerCase()}`}
                                 >
@@ -389,21 +388,18 @@ export function ProfileMonitoring({
                                       <>
                                         <dt>Matched rule</dt>
                                         <dd>
-                                          {selected.policyId} ·{" "}
                                           {selected.policy}
                                         </dd>
                                       </>
                                     )}
-                                    <dt>Profile ID</dt>
-                                    <dd>{selected.profile}</dd>
-                                    <dt>Guardrail ID</dt>
-                                    <dd>{selected.guardrail}</dd>
+                                    <dt>Profile</dt>
+                                    <dd>{profile.name}</dd>
+                                    <dt>Guardrail</dt>
+                                    <dd>{row.guard?.name ?? "Unavailable Guardrail"}</dd>
                                     <dt>Outcome / latency</dt>
                                     <dd>
                                       {selected.result} · {selected.latency} ms
                                     </dd>
-                                    <dt>Trace ID</dt>
-                                    <dd>{selected.id}</dd>
                                     <dt>Scanned content (synthetic)</dt>
                                     <dd>{selected.input}</dd>
                                     <dt>Guardrail version</dt>

@@ -1,5 +1,5 @@
 import { configError, type UnifiedConfig } from "../business-demo/evaluation";
-import { completeDemoState } from "./mock-data";
+import { defaultNmgrDemo } from "./mock-data";
 export const controlUnits = ["ISS", "RMG", "LCS"];
 
 export type Kind = "Guardrail" | "Profile";
@@ -11,21 +11,15 @@ export type Status =
   | "SIGNOFF REQUESTED"
   | "SIGNED OFF"
   | "DEPLOYED";
-export type Role =
-  | "Custodian"
-  | "Tech"
-  | "Approver"
-  | "Deployer"
-  | "Operator"
-  | "Admin"
-  | "Control Unit";
-export const accounts = ["Admin", "ISS", "LCS", "RMG"];
+export type Role = "User" | "User Admin" | "IT Admin";
+export const accounts: Role[] = ["User", "User Admin", "IT Admin"];
 export function roleForOwner(owner: string): Role {
-  return owner === "Admin" ? "Admin" : "Control Unit";
+  return accounts.includes(owner as Role) ? (owner as Role) : "User";
 }
-export const canAuthor = (role: Role) =>
-  ["Custodian", "Control Unit", "Admin"].includes(role);
+export const canAuthor = (role: Role) => role === "User";
 export type Run = {
+  tester?: Role;
+  configurationRevision?: number;
   id: string;
   version: number;
   base: number | null;
@@ -36,6 +30,7 @@ export type Run = {
   cases: number;
 };
 export type Entity = {
+  configurationRevision?: number;
   id: string;
   kind: Kind;
   name: string;
@@ -57,6 +52,8 @@ export type Entity = {
   runs: Run[];
   mode: "Normal" | "Pass all" | "Block all";
   threshold: number;
+  thresholdMetric?: "Block Rate" | "Pass Rate" | "Error Rate";
+  thresholdWindow?: number;
   signedBy?: string;
   config?: UnifiedConfig;
   revisions?: Record<number, Revision>;
@@ -72,11 +69,11 @@ export type Revision = Pick<
   | "mandatory"
   | "attributes"
   | "config"
-> & { threshold?: number };
+> & { threshold?: number; thresholdMetric?: Entity["thresholdMetric"]; thresholdWindow?: number };
 export function deployedEntity(item: Entity): Entity {
   const saved =
     item.deployed === null ? undefined : item.revisions?.[item.deployed];
-  return saved ? { ...item, ...saved } : item;
+  return saved ? { ...item, ...saved, thresholdMetric: saved.thresholdMetric, thresholdWindow: saved.thresholdWindow } : item;
 }
 export type Audit = {
   id: string;
@@ -99,51 +96,56 @@ export type Action =
   | "Normal"
   | "Pass all"
   | "Block all";
-export const roles: Role[] = [
-  "Custodian",
-  "Tech",
-  "Approver",
-  "Deployer",
-  "Operator",
-];
-export const actor = (role: Role) =>
-  ({
-    Admin: "Admin",
-    "Control Unit": "ISS",
-    Custodian: "Yann GUO",
-    Tech: "Admin",
-    Approver: "Feng ZONG",
-    Deployer: "Admin",
-    Operator: "ISS Operator",
-  })[role];
+export const roles = accounts;
+export const actor = (role: Role) => role;
+export function hasTechnicalPass(e: Entity): boolean {
+  return e.runs.some(
+    (r) =>
+      r.version === e.version &&
+      r.configurationRevision === (e.configurationRevision ?? 0) &&
+      r.passed &&
+      r.tester === "IT Admin",
+  );
+}
 export function allowed(e: Entity, action: Action, role: Role): boolean {
-  if (role === "Admin") return roles.some((r) => allowed(e, action, r));
-  if (role === "Control Unit")
-    return allowed(e, action, "Custodian") || allowed(e, action, "Operator");
   switch (action) {
     case "implement":
-      return role === "Tech" && e.kind === "Guardrail" && e.status === "DRAFT";
+      return (
+        e.kind === "Guardrail" &&
+        role === "IT Admin" &&
+        ["DRAFT", "TEST FAILED"].includes(e.status)
+      );
     case "test-pass":
     case "test-fail":
       return (
-        (role === "Custodian" || role === "Tech") &&
+        e.kind === "Guardrail" &&
+        role === "IT Admin" &&
         ["TEST READY", "TEST FAILED", "TEST PASSED"].includes(e.status)
       );
     case "request":
       return (
-        role === "Custodian" &&
-        e.status === "TEST PASSED" &&
-        e.runs[0]?.passed === true &&
-        e.runs[0]?.version === e.version
+        role === "User" &&
+        (e.kind === "Profile"
+          ? e.status === "DRAFT" && e.refs.length > 0
+          : e.status === "TEST PASSED" &&
+            e.runs[0]?.passed === true &&
+            e.runs[0]?.version === e.version &&
+            e.runs[0]?.configurationRevision ===
+              (e.configurationRevision ?? 0) &&
+            hasTechnicalPass(e))
       );
     case "approve":
     case "reject":
-      return role === "Approver" && e.status === "SIGNOFF REQUESTED";
+      return role === "User Admin" && e.status === "SIGNOFF REQUESTED";
     case "deploy":
-      return role === "Deployer" && e.status === "SIGNED OFF";
+      return (
+        e.kind === "Guardrail" &&
+        role === "IT Admin" &&
+        e.status === "SIGNED OFF"
+      );
     case "withdraw":
       return (
-        role === "Custodian" &&
+        role === "User" &&
         [
           "TEST READY",
           "TEST FAILED",
@@ -153,10 +155,14 @@ export function allowed(e: Entity, action: Action, role: Role): boolean {
         ].includes(e.status)
       );
     case "revise":
-      return role === "Custodian" && e.status === "DEPLOYED";
+      return (
+        role === "User" &&
+        (e.status === "DEPLOYED" ||
+          (e.kind === "Profile" && e.status === "SIGNED OFF"))
+      );
     default:
       return (
-        role === "Operator" &&
+        role === "User" &&
         e.kind === "Profile" &&
         e.deployed !== null &&
         e.mode !== action
@@ -172,9 +178,11 @@ export function transition(
     dataset?: string;
     cases?: number;
     policies?: string[];
+    refs?: string[];
     threshold?: number;
     reason?: string;
     actorName?: string;
+    approver?: string;
     config?: UnifiedConfig;
   } = {},
 ): State {
@@ -185,18 +193,30 @@ export function transition(
     );
   const e: Entity = { ...current, updated: new Date().toISOString() };
   if (action === "implement") {
-    if (!options.policies?.length)
+    if (e.kind === "Guardrail" && !options.policies?.length)
       throw new Error("Add at least one implemented policy.");
-    if (options.config) {
+    if (e.kind === "Guardrail" && !options.config)
+      throw new Error("Configure the Guardrail before testing.");
+    if (e.kind === "Profile") {
+      e.refs = options.refs ?? e.refs;
+      e.threshold = options.threshold ?? e.threshold;
+      addEntity(
+        { ...state, entities: state.entities.filter((x) => x.id !== id) },
+        e,
+      );
+    }
+    if (e.kind === "Guardrail" && options.config) {
       const problem = configError(options.config);
       if (problem) throw new Error(problem);
       e.config = options.config;
     }
-    e.policies = options.policies;
+    if (e.kind === "Guardrail") e.policies = options.policies!;
+    e.configurationRevision = (e.configurationRevision ?? 0) + 1;
     e.status = "TEST READY";
   }
   if (action === "withdraw") {
-    e.status = e.kind === "Guardrail" ? "DRAFT" : "TEST READY";
+    e.status = "DRAFT";
+    e.configurationRevision = (e.configurationRevision ?? 0) + 1;
     delete e.signedBy;
   }
   if (action === "test-pass" || action === "test-fail") {
@@ -206,6 +226,8 @@ export function transition(
     e.runs = [
       {
         id: crypto.randomUUID(),
+        tester: role,
+        configurationRevision: e.configurationRevision ?? 0,
         version: e.version,
         base: e.deployed,
         dataset: options.dataset,
@@ -217,42 +239,39 @@ export function transition(
       ...e.runs,
     ];
   }
-  if (action === "request") e.status = "SIGNOFF REQUESTED";
+  if (action === "request") {
+    e.status = "SIGNOFF REQUESTED";
+    e.approver = options.approver?.trim() || e.approver;
+  }
   if (action === "approve") {
     e.status = "SIGNED OFF";
     e.signedBy = options.actorName ?? actor(role);
+    if (e.kind === "Profile") {
+      // Profiles become effective on approval; deployed stores the active snapshot
+      // for compatibility with the existing monitoring/version model.
+      addEntity(
+        { ...state, entities: state.entities.filter((x) => x.id !== id) },
+        e,
+      );
+      e.deployed = e.version;
+      e.deployedAt = e.updated;
+      e.deployedRefs = [...e.refs];
+    }
   }
   if (action === "reject") {
     if (!options.reason?.trim()) throw new Error("Enter a rejection reason.");
-    e.status = "TEST READY";
+    e.status = e.kind === "Profile" ? "DRAFT" : "TEST READY";
+    e.configurationRevision = (e.configurationRevision ?? 0) + 1;
     delete e.signedBy;
   }
   if (action === "revise") {
     e.revisions = { ...e.revisions, [e.version]: snapshot(e) };
     e.version++;
-    e.status = e.kind === "Guardrail" ? "DRAFT" : "TEST READY";
+    e.status = "DRAFT";
+    e.configurationRevision = (e.configurationRevision ?? 0) + 1;
     delete e.signedBy;
   }
   if (action === "deploy") {
-    if (e.kind === "Profile") {
-      if (
-        !e.refs.length ||
-        e.refs.some(
-          (id) =>
-            !state.entities.some(
-              (g) =>
-                g.kind === "Guardrail" && g.id === id && g.deployed !== null,
-            ),
-        )
-      )
-        throw new Error("Deploy all referenced Guardrails first.");
-      validateThreshold(e.threshold);
-      if (options.threshold !== undefined && options.threshold !== e.threshold)
-        throw new Error(
-          "Update the Profile threshold before testing and sign-off.",
-        );
-      e.deployedRefs = [...e.refs];
-    }
     e.deployed = e.version;
     e.deployedAt = e.updated;
     e.status = "DEPLOYED";
@@ -277,10 +296,19 @@ function validateThreshold(value: number) {
   if (!Number.isFinite(value) || value < 0 || value > 100)
     throw new Error("Alert threshold must be between 0 and 100%.");
 }
-export function addEntity(state: State, e: Entity): State {
-  if (e.kind === "Profile") validateThreshold(e.threshold);
+export function addEntity(state: State, e: Entity, role: Role = "User"): State {
+  if (!canAuthor(role)) throw new Error("Only User can create requests.");
+  if (e.kind === "Profile") {
+    validateThreshold(e.threshold);
+    if (e.thresholdMetric !== undefined && !["Block Rate", "Pass Rate", "Error Rate"].includes(e.thresholdMetric)) throw new Error("Select a valid Alert Metric.");
+    if (e.thresholdWindow !== undefined && (!Number.isSafeInteger(e.thresholdWindow) || e.thresholdWindow < 1)) throw new Error("Alert Window must be a positive whole number of minutes.");
+  }
   if (!e.name.trim() || !e.description.trim())
-    throw new Error("Name and description are required.");
+    throw new Error(
+      e.kind === "Guardrail"
+        ? "Guardrail name and business intents are required."
+        : "Profile name and use case are required.",
+    );
   if (!/^[a-z][a-z0-9-]{2,63}$/.test(e.id))
     throw new Error(
       "ID must be 3–64 lowercase letters, numbers or hyphens, starting with a letter.",
@@ -339,10 +367,7 @@ export function editEntity(state: State, item: Entity, role: Role): State {
     )
   )
     throw new Error("Withdraw this revision before editing.");
-  if (role === "Admin" && item.config) {
-    const problem = configError(item.config);
-    if (problem) throw new Error(problem);
-  }
+
   const validated = addEntity(
     { ...state, entities: state.entities.filter((e) => e.id !== item.id) },
     item,
@@ -353,15 +378,18 @@ export function editEntity(state: State, item: Entity, role: Role): State {
     description: item.description,
     unit: item.unit,
     location: item.location,
+    approver: item.approver,
     mandatory: item.mandatory,
     refs: item.refs,
     attributes: item.attributes,
     threshold: item.threshold,
+    thresholdMetric: item.thresholdMetric,
+    thresholdWindow: item.thresholdWindow,
     updated: item.updated,
     runs: current.runs,
-    policies: role === "Admin" ? item.policies : current.policies,
-    ...(role === "Admin" && item.config ? { config: item.config } : {}),
-    status: current.kind === "Guardrail" ? "DRAFT" : "TEST READY",
+    policies: current.policies,
+    configurationRevision: (current.configurationRevision ?? 0) + 1,
+    status: "DRAFT",
   };
   delete saved.signedBy;
   return {
@@ -384,6 +412,8 @@ function snapshot(e: Entity): Revision {
     mandatory: e.mandatory,
     attributes: { ...e.attributes },
     threshold: e.threshold,
+    thresholdMetric: e.thresholdMetric,
+    thresholdWindow: e.thresholdWindow,
     policies: [...e.policies],
     refs: [...e.refs],
     ...(e.config ? { config: { ...e.config } } : {}),
@@ -403,10 +433,7 @@ export function reviseEntity(
     { ...state, entities: state.entities.filter((e) => e.id !== item.id) },
     item,
   );
-  if (role === "Admin" && item.config) {
-    const problem = configError(item.config);
-    if (problem) throw new Error(problem);
-  }
+
   const revised = transition(
     state,
     item.id,
@@ -422,70 +449,5 @@ export function reviseEntity(
   return { ...next, audit: revised.audit };
 }
 export function seed(): State {
-  const statuses: Status[] = [
-    "DEPLOYED",
-    "DRAFT",
-    "TEST READY",
-    "TEST FAILED",
-    "TEST PASSED",
-    "SIGNOFF REQUESTED",
-    "SIGNED OFF",
-  ];
-  const entities: Entity[] = [];
-  for (const kind of ["Guardrail", "Profile"] as const)
-    statuses.forEach((status, i) => {
-      const id = `${kind === "Guardrail" ? "gr" : "pf"}-${["pii-all", "pii-sg", "pii-cn", "remittance", "customer-support", "risk-review", "financial-advice"][i]}`;
-      const now = new Date(Date.now() - 3600000).toISOString();
-      entities.push({
-        id,
-        kind,
-        name: `${["Personal Identifiable Information Protection", "Personal Data Protection · Singapore", "Personal Data Protection · China", "Cross-border Remittance", "Customer Support Safety", "Risk Review", "Financial Advice Controls"][i]}`,
-        description:
-          "Protect personal data and ensure compliant responses across the selected business scope.",
-        unit: i % 2 ? "RMG" : "ISS",
-        location: i === 1 ? "SG" : i === 2 ? "CN" : "ALL",
-        custodian: "Yann GUO",
-        approver: "Feng ZONG",
-        mandatory: i === 0,
-        status:
-          kind === "Profile" && status === "DRAFT" ? "TEST READY" : status,
-        version: 1,
-        deployed: status === "DEPLOYED" ? 1 : null,
-        updated: now,
-        policies: [
-          "Detect personal identifiers in input and output.",
-          "Block disclosure of unmasked customer information.",
-        ],
-        refs: kind === "Profile" ? ["gr-pii-all"] : [],
-        deployedRefs:
-          kind === "Profile" && status === "DEPLOYED" ? ["gr-pii-all"] : [],
-        attributes: { bu: "ALL", agent: "ALL", data: "Personal" },
-        runs: [
-          "TEST PASSED",
-          "SIGNOFF REQUESTED",
-          "SIGNED OFF",
-          "DEPLOYED",
-          "TEST FAILED",
-        ].includes(status)
-          ? [
-              {
-                id: `run-${id}`,
-                version: 1,
-                base: null,
-                dataset: "PII acceptance suite",
-                cases: 24,
-                passed: status !== "TEST FAILED",
-                start: now,
-                end: now,
-              },
-            ]
-          : [],
-        mode: "Normal",
-        threshold: 5,
-        ...(["SIGNED OFF", "DEPLOYED"].includes(status)
-          ? { signedBy: "Feng ZONG" }
-          : {}),
-      });
-    });
-  return completeDemoState({ entities, audit: [] });
+  return defaultNmgrDemo();
 }

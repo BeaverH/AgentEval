@@ -25,8 +25,8 @@ export function GuardrailInfo({
   ].sort((a, b) => b - a);
   return (
     <div className="nm-info">
-      <section aria-label="Requirement">
-        <h3>Requirement</h3>
+      <section aria-label="Business intents">
+        <h3>Business Intents</h3>
         <p className="nm-info-description">{item.description}</p>
       </section>
       <section aria-label="Ownership and scope">
@@ -55,15 +55,13 @@ export function GuardrailInfo({
           ))}
         </dl>
       </section>
-      <section aria-label="Technical configuration">
+      <section aria-label="Requirement">
         <div className="nm-info-section-head">
-          <h3>Technical configuration</h3>
+          <h3>Requirement</h3>
           <span>{item.policies.length} policies</span>
         </div>
         {item.status === "DRAFT" ? (
-          <p className="nm-callout">
-            Waiting for Tech to implement the policies.
-          </p>
+          <p className="nm-muted">Technical configuration is pending.</p>
         ) : item.policies.length ? (
           <ol
             className={`nm-policy-list ${item.policies.length > 3 ? "nm-module-scroll" : ""}`}
@@ -134,7 +132,6 @@ export function GuardrailInfo({
                 <span>
                   <strong>{profile.name}</strong>
                   <small>
-                    {profile.id} ·{" "}
                     {profile.deployed !== null &&
                     profile.deployedRefs.includes(item.id)
                       ? "Deployed reference"

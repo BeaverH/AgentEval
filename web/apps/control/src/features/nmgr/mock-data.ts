@@ -1,198 +1,173 @@
-import type { Entity, State, Run } from "./model";
+import { defaultDemo } from "../business-demo/default-demo";
+import type { Entity, State } from "./model";
 
-// Rename retired demo accounts without changing configurations or audit evidence.
-export function normalizeDemoAccounts(state: State): State {
-  const rename = (name: string) =>
-    /^(it\s*admin|line\s*1\.5|line\s*2|l1 deployer|tech team)$/i.test(
-      name.trim(),
-    )
-      ? "Admin"
-      : name;
-  let changed = false;
-  const entities = state.entities.map((item) => {
-    const custodian = rename(item.custodian);
-    const approver = rename(item.approver);
-    const signedBy = item.signedBy && rename(item.signedBy);
-    if (
-      custodian === item.custodian &&
-      approver === item.approver &&
-      signedBy === item.signedBy
-    )
-      return item;
-    changed = true;
-    return { ...item, custodian, approver, ...(signedBy ? { signedBy } : {}) };
-  });
-  const audit = state.audit.map((entry) => {
-    const actor = rename(entry.actor);
-    if (actor === entry.actor) return entry;
-    changed = true;
-    return { ...entry, actor };
-  });
-  return changed ? { ...state, entities, audit } : state;
+function demoSlo(id: string) {
+  return {
+    thresholdMetric: id === "default-customer-assistant" ? "Pass Rate" as const : "Block Rate" as const,
+    threshold: id === "default-customer-assistant" ? 85 : 80,
+    thresholdWindow: 5,
+  };
 }
 
-// Add only missing fixtures and migrate retired account labels in saved data.
-export function completeDemoState(state: State): State {
-  state = normalizeDemoAccounts(state);
-  const deployedAt = new Date(Date.now() - 3600000).toISOString();
-  const guards = [
-    [
-      "injection",
-      "Prompt Injection",
-      "Ignore previous instructions",
-      "Detect instruction override attempts.",
-    ],
-    [
-      "credentials",
-      "Credential Protection",
-      "password|api[_-]?key",
-      "Block disclosure of passwords and API keys.",
-    ],
-    [
-      "financial",
-      "Financial Advice",
-      "guaranteed return",
-      "Detect unsupported guarantees in financial advice.",
-    ],
-    [
-      "abuse",
-      "Abusive Content",
-      "synthetic-abuse",
-      "Block the synthetic abusive-content marker.",
-    ],
-  ].map(([slug, name, content, policy], i): Entity => ({
-    id: `gr-demo-${slug}`,
-    kind: "Guardrail",
-    name: `${name} (Demo)`,
-    description: `${policy} Deterministic fixture for frontend walkthroughs.`,
-    unit: ["ISS", "LCS", "RMG", "ISS"][i]!,
-    location: "ALL",
-    custodian: "Admin",
-    approver: "Admin",
-    mandatory: false,
-    status: "DEPLOYED",
-    version: 1,
-    deployed: 1,
-    deployedAt,
-    updated: deployedAt,
-    policies: [policy!],
-    refs: [],
-    deployedRefs: [],
-    attributes: { bu: "ALL", agent: "ALL", data: "Personal" },
-    runs: [],
-    mode: "Normal",
-    threshold: 5,
-    signedBy: "Admin",
-    config: {
-      scannerType: "regex",
-      direction: "response",
-      content: content!,
-      versionName: "v1",
-      versionDescription: "Synthetic demo configuration",
-    },
-  }));
-  const { config: _config, ...base } = guards[0]!;
-  const profiles = (
-    [
-      [
-        "normal",
-        "Customer Support",
-        "Normal",
-        "ISS",
-        "SG",
-        ["gr-pii-all", guards[0]!.id, guards[1]!.id],
-      ],
-      [
-        "bypass",
-        "Internal Assistant",
-        "Pass all",
-        "LCS",
-        "CN",
-        ["gr-pii-all", guards[3]!.id],
-      ],
-      [
-        "block",
-        "Financial Review",
-        "Block all",
-        "RMG",
-        "ALL",
-        ["gr-pii-all", guards[2]!.id],
-      ],
-    ] as const
-  ).map(([slug, name, mode, unit, location, refs]): Entity => ({
-    ...base,
-    id: `pf-demo-${slug}`,
-    kind: "Profile",
-    name: `${name} (Demo)`,
-    description: `Demonstrates ${mode} with multiple deployed Guardrails. Synthetic traffic only.`,
-    unit,
-    location,
-    custodian: unit,
-    mode,
-    policies: [],
-    refs: [...refs],
-    deployedRefs: [...refs],
-    attributes: {
-      bu: "CBG",
-      agent: "Customer",
-      data: slug === "block" ? "Financial" : "Personal",
-    },
-  }));
-  const available = new Set([...state.entities, ...guards].map((e) => e.id));
-  const fixtures = [
-    ...guards,
-    ...profiles.filter((p) => p.refs.every((id) => available.has(id))),
-  ];
-  const additions = fixtures.filter(
-    (item) => !state.entities.some((e) => e.id === item.id),
-  );
-  const history = additions.flatMap((item) => {
-    const actions = [
-      "created",
-      ...(item.kind === "Guardrail" ? ["implement"] : []),
-      "test-fail",
-      "test-pass",
-      "request",
-      "approve",
-      "deploy",
-      ...(item.mode !== "Normal" ? [item.mode] : []),
-    ];
-    const timeAt = (index: number) =>
-      new Date(
-        Date.parse(deployedAt) - (actions.length - 1 - index) * 60000,
-      ).toISOString();
-    item.deployedAt = timeAt(actions.indexOf("deploy"));
-    item.runs = [true, false].map((passed): Run => ({
-      id: `run-${item.id}-${passed ? "pass" : "fail"}`,
+// Upgrade the old, implicit 5% error-rate sample without replacing authored rules.
+function migrateDemoSlo(item: Entity): Entity {
+  if (item.kind !== "Profile") return item;
+  const upgrade = <T extends { threshold?: number; thresholdMetric?: string }>(value: T): T =>
+    value.thresholdMetric === undefined && value.threshold === 5
+      ? { ...value, ...demoSlo(item.id) }
+      : value;
+  return {
+    ...upgrade(item),
+    ...(item.revisions ? {
+      revisions: Object.fromEntries(Object.entries(item.revisions).map(([version, revision]) => [version, upgrade(revision)])),
+    } : {}),
+  };
+}
+
+// v0.2.17 calls atomic guardrails "policies" and composed profiles "guardrails".
+// Preserve its real requirements, scanner prompts, scope and reference bindings.
+export function defaultNmgrDemo(now = Date.now()): State {
+  const source = defaultDemo(now);
+  const time = new Date(now - 3600000).toISOString();
+  const entities = source.map((item): Entity => {
+    const guard = item.kind === "policies";
+    const refs = guard ? [] : item.policies.map((p) => p.policyId);
+    return {
+      id: item.id,
+      kind: guard ? "Guardrail" : "Profile",
+      name: item.name,
+      description: guard ? item.text : item.useCase,
+      // These linked examples belong to the ISS workbench in the NMGR demo.
+      unit: "ISS",
+      location: guard ? "ALL" : item.location,
+      custodian: "User",
+      approver: "User Admin",
+      mandatory: item.mandatory ?? false,
+      status: guard ? "DEPLOYED" : "SIGNED OFF",
       version: 1,
-      base: null,
-      dataset: "Synthetic acceptance suite (Demo)",
-      cases: 24,
-      passed,
-      start: timeAt(actions.indexOf(passed ? "test-pass" : "test-fail")),
-      end: timeAt(actions.indexOf(passed ? "test-pass" : "test-fail")),
-    }));
-    return actions.map((action, index) => ({
-      id: `audit-${item.id}-${index}`,
-      time: timeAt(index),
-      entity: item.id,
-      action,
-      actor: ["implement", "approve", "deploy"].includes(action)
-        ? "Admin"
-        : item.custodian,
-    }));
+      deployed: 1,
+      updated: time,
+      deployedAt: time,
+      configurationRevision: 1,
+      policies: guard ? [item.text] : [],
+      refs,
+      deployedRefs: [...refs],
+      attributes: {
+        bu: guard ? "ALL" : item.busu,
+        agent: guard ? "ALL" : item.agentType,
+        data: guard ? "Personal data" : item.dataType,
+      },
+      runs: guard
+        ? [
+            {
+              id: `run-${item.id}`,
+              version: 1,
+              configurationRevision: 1,
+              tester: "IT Admin",
+              base: null,
+              dataset: `${item.name} acceptance suite`,
+              passed: true,
+              start: time,
+              end: time,
+              cases: 24,
+            },
+          ]
+        : [],
+      mode: "Normal",
+      threshold: 5,
+      ...(!guard ? demoSlo(item.id) : {}),
+      signedBy: "User Admin",
+      ...(guard && item.workflow?.config
+        ? { config: item.workflow.config }
+        : {}),
+    };
   });
-  return additions.length
-    ? {
-        entities: [...state.entities, ...additions],
-        audit: [
-          ...state.audit,
-          ...history.filter(
-            (entry) => !state.audit.some((saved) => saved.id === entry.id),
-          ),
-        ]
-          .sort((a, b) => b.time.localeCompare(a.time))
-          .slice(0, 500),
-      }
-    : state;
+  return {
+    entities,
+    audit: entities.flatMap((item) =>
+      (item.kind === "Guardrail"
+        ? ["created", "implement", "test-pass", "request", "approve", "deploy"]
+        : ["created", "request", "approve"]
+      ).map((action, i) => ({
+        id: `audit-${item.id}-${i}`,
+        entity: item.id,
+        action,
+        time,
+        actor: ["implement", "test-pass", "deploy"].includes(action)
+          ? "IT Admin"
+          : action === "approve"
+            ? "User Admin"
+            : "User",
+      })),
+    ),
+  };
+}
+// Repair only the built-in examples; preserve authored entities and lifecycle data.
+export function completeDemoState(state: State): State {
+  const defaults = defaultNmgrDemo();
+  const builtinGuards = defaults.entities.filter(
+    (item) => item.kind === "Guardrail",
+  );
+  const missing = builtinGuards.filter(
+    (guard) =>
+      !state.entities.some((item) => item.id === guard.id) &&
+      state.entities.some(
+        (item) =>
+          item.kind === "Profile" &&
+          [...item.refs, ...item.deployedRefs].includes(guard.id),
+      ),
+  );
+  return {
+    ...state,
+    audit: [
+      ...state.audit,
+      ...defaults.audit.filter(
+        (entry) =>
+          missing.some((item) => item.id === entry.entity) &&
+          !state.audit.some((saved) => saved.id === entry.id),
+      ),
+    ],
+    entities: [...state.entities, ...missing].map(migrateDemoSlo).map((item): Entity =>
+      item.kind !== "Profile"
+        ? builtinGuards.some((guard) => guard.id === item.id) &&
+          item.unit === "LCS"
+          ? {
+              ...item,
+              unit: "ISS",
+              ...(item.revisions
+                ? {
+                    revisions: Object.fromEntries(
+                      Object.entries(item.revisions).map(
+                        ([version, revision]) => [
+                          version,
+                          revision.unit === "LCS"
+                            ? { ...revision, unit: "ISS" }
+                            : revision,
+                        ],
+                      ),
+                    ),
+                  }
+                : {}),
+            }
+          : item
+        : {
+            ...item,
+            status:
+              item.status === "DEPLOYED"
+                ? "SIGNED OFF"
+                : ["TEST READY", "TEST PASSED", "TEST FAILED"].includes(
+                      item.status,
+                    )
+                  ? "DRAFT"
+                  : item.status,
+            ...(item.status === "SIGNED OFF" && item.deployed !== item.version
+              ? {
+                  deployed: item.version,
+                  deployedRefs: [...item.refs],
+                  deployedAt: item.updated,
+                }
+              : {}),
+          },
+    ),
+  };
 }

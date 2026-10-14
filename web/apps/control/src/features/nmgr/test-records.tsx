@@ -1,14 +1,10 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
-import type { Entity, Run } from "./model";
-const stamp = (value: string) =>
-  new Date(value).toLocaleString("en-GB", { timeZone: "Asia/Shanghai" });
+import type { Entity } from "./model";
 export function TestRecords({
   item,
-  onReport,
 }: {
   item: Entity;
-  onReport: (run: Run) => void;
 }) {
   const [filter, setFilter] = useState("All");
   const [page, setPage] = useState(1);
@@ -43,14 +39,11 @@ export function TestRecords({
         </label>
       </div>
       <div className="nm-scroll">
-        <table>
+        <table className="nm-test-records" aria-label="Test Records">
           <thead>
             <tr>
               <th>Test / Version</th>
               <th>Result</th>
-              <th>Action</th>
-              <th>Start</th>
-              <th>End</th>
             </tr>
           </thead>
           <tbody>
@@ -65,16 +58,9 @@ export function TestRecords({
                 </td>
                 <td>
                   <span className={`nm-badge ${r.passed ? "good" : "bad"}`}>
-                    {r.passed ? "PASSED" : "TEST FAILED"}
+                    {r.passed ? "Passed" : "Test failed"}
                   </span>
                 </td>
-                <td>
-                  <Button variant="outline" onClick={() => onReport(r)}>
-                    Report
-                  </Button>
-                </td>
-                <td>{stamp(r.start)}</td>
-                <td>{stamp(r.end)}</td>
               </tr>
             ))}
           </tbody>
@@ -84,7 +70,7 @@ export function TestRecords({
         <p className="nm-empty">No tests recorded for this version.</p>
       )}
       <footer className="nm-pagination">
-        <span>{runs.length} records · UTC+08:00</span>
+        <span>{runs.length} records</span>
         <Button
           variant="outline"
           disabled={current === 1}

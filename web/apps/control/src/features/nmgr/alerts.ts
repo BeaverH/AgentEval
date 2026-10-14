@@ -15,6 +15,14 @@ export type Alert = {
   rule: string;
   reason: string;
   evidence: string;
+  breach?: {
+    triggerTime: string;
+    profileName: string;
+    metric: string;
+    rate: number;
+    threshold: number;
+    windowMinutes?: number;
+  };
   target?: MonitoringTarget;
 };
 
@@ -52,18 +60,45 @@ export const alertCriteria = [
   ],
   [
     "CRITICAL",
-    "A deployed Profile's scanner error percentage exceeds its configured alert threshold. This aggregates all checks in the demo snapshot.",
+    "A deployed Profile exceeds its configured rate threshold within the selected time window. Legacy Profiles use scanner error percentage across the demo snapshot.",
   ],
 ] as const;
 
-export function buildAlerts(profiles: Entity[], scans: Scan[]): Alert[] {
+export function buildAlerts(profiles: Entity[], scans: Scan[], now = Date.now()): Alert[] {
   const alerts: Alert[] = [];
   for (const profile of profiles) {
     if (profile.mode !== "Normal") continue;
     const checks = scans.filter((s) => s.profile === profile.id);
     const errors = checks.filter((s) => s.result === "Error");
     const errorRate = checks.length ? (errors.length / checks.length) * 100 : 0;
-    if (errorRate > profile.threshold)
+    if (profile.thresholdMetric) {
+      const windowMinutes = profile.thresholdWindow ?? 5;
+      const recent = checks.filter((scan) => {
+        const age = now - Date.parse(scan.time);
+        return age >= 0 && age <= windowMinutes * 60_000;
+      });
+      const result = profile.thresholdMetric === "Block Rate" ? "Blocked" : profile.thresholdMetric === "Pass Rate" ? "Passed" : "Error";
+      const count = recent.filter((scan) => scan.result === result).length;
+      const rate = recent.length ? count / recent.length * 100 : 0;
+      if (rate > profile.threshold) alerts.push({
+        id: `slo-rate-${profile.id}`,
+        level: "CRITICAL",
+        event: `${profile.thresholdMetric} exceeded`,
+        profile: profile.id,
+        guardrail: "All deployed Guardrails",
+        rule: profile.thresholdMetric.toUpperCase().replaceAll(" ", "_"),
+        breach: {
+          triggerTime: new Date(Math.max(...recent.map((scan) => Date.parse(scan.time)))).toISOString(),
+          profileName: profile.name,
+          metric: profile.thresholdMetric,
+          rate,
+          threshold: profile.threshold,
+          windowMinutes,
+        },
+        reason: `${profile.thresholdMetric} exceeded this Profile's configured threshold (${profile.threshold}%) in the last ${windowMinutes} minutes.`,
+        evidence: `${count} ${result} events / ${recent.length} checks = ${rate.toFixed(1)}% > ${profile.threshold}%. Window: ${windowMinutes} minutes.`,
+      });
+    } else if (errorRate > profile.threshold)
       alerts.push({
         id: `error-rate-${profile.id}`,
         level: "CRITICAL",
@@ -71,6 +106,13 @@ export function buildAlerts(profiles: Entity[], scans: Scan[]): Alert[] {
         profile: profile.id,
         guardrail: "All deployed Guardrails",
         rule: "SCANNER_ERROR_RATE",
+        breach: {
+          triggerTime: new Date(Math.max(...checks.map((scan) => Date.parse(scan.time)))).toISOString(),
+          profileName: profile.name,
+          metric: "Error Rate",
+          rate: errorRate,
+          threshold: profile.threshold,
+        },
         reason: `Scanner error percentage exceeded this Profile's configured threshold (${profile.threshold}%).`,
         evidence: `${errors.length} Error events / ${checks.length} checks = ${errorRate.toFixed(1)}% > ${profile.threshold}%. Scope: ${profile.deployedRefs.length} Guardrails, current demo snapshot.`,
       });

@@ -1,25 +1,18 @@
-import { useState, type ReactNode } from "react";
+import { useLayoutEffect, useRef, type ReactNode } from "react";
 import {
-  BookOpen,
-  CheckCheck,
-  ChevronDown,
   FileText,
-  FlaskConical,
-  Folder,
   LayoutDashboard,
   Layers,
   ShieldCheck,
   Activity,
 } from "lucide-react";
 import { BrandMark } from "@/components/brand/brand-logo";
-import { AccountMenu } from "@/features/business-demo/owner-menu";
 import {
   Sidebar,
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
-  SidebarGroupLabel,
   SidebarHeader,
   SidebarInset,
   SidebarMenu,
@@ -31,20 +24,24 @@ import {
   useSidebar,
 } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
-import { accounts, type Kind } from "./model";
-export type View =
-  | "repository"
-  | "tests"
-  | "signoff"
-  | "deploy"
-  | "dashboard"
-  | "operations"
-  | "logs";
+import { roleForOwner, type Kind } from "./model";
+import {
+  workbenchLabels,
+  workbenchNavigation,
+  actorNames,
+  homeFor,
+  type View,
+} from "./workbench";
+export type { View } from "./workbench";
 type Props = {
   kind: Kind;
   view: View;
   owner: string;
   busy: boolean;
+  controlUnit?: string;
+  title?: string;
+  description?: string;
+  actions?: ReactNode;
   onOwner: (owner: string) => void;
   onNavigate: (kind: Kind, view: View) => void;
   children: ReactNode;
@@ -52,7 +49,7 @@ type Props = {
 export function NmgrShell(props: Props) {
   return (
     <TooltipProvider delayDuration={250}>
-      <SidebarProvider>
+      <SidebarProvider className="nm-workspace">
         <ShellContent {...props} />
       </SidebarProvider>
     </TooltipProvider>
@@ -63,13 +60,34 @@ function ShellContent({
   view,
   owner,
   busy,
+  controlUnit = "ISS",
+  title,
+  description,
+  actions,
   onOwner,
   onNavigate,
   children,
 }: Props) {
-  const { isMobile, state, setOpenMobile, setOpen } = useSidebar();
+  const role = roleForOwner(owner);
+  const { isMobile, state, setOpenMobile } = useSidebar();
   const compact = !isMobile && state === "collapsed";
-  const [expanded, setExpanded] = useState({ Guardrail: true, Profile: true });
+  const headerRef = useRef<HTMLElement>(null);
+  useLayoutEffect(() => {
+    const header = headerRef.current;
+    const workspace = header?.closest<HTMLElement>(
+      '[data-slot="sidebar-wrapper"]',
+    );
+    if (!header || !workspace) return;
+    const align = () =>
+      workspace.style.setProperty(
+        "--nm-header-height",
+        `${header.getBoundingClientRect().height}px`,
+      );
+    align();
+    const observer = new ResizeObserver(align);
+    observer.observe(header);
+    return () => observer.disconnect();
+  }, []);
   const navigate = (k: Kind, v: View) => {
     onNavigate(k, v);
     setOpenMobile(false);
@@ -77,10 +95,22 @@ function ShellContent({
   const nav = (k: Kind, v: View, label: string, Icon: typeof ShieldCheck) => (
     <SidebarMenuItem key={`${k}-${v}`}>
       <SidebarMenuButton
-        isActive={kind === k && view === v}
+        isActive={
+          kind === k &&
+          (view === v ||
+            (v === "dashboard" && view === "operations") ||
+            (v === "repository" && view === "request"))
+        }
         tooltip={label}
         aria-label={label}
-        aria-current={kind === k && view === v ? "page" : undefined}
+        aria-current={
+          kind === k &&
+          (view === v ||
+            (v === "dashboard" && view === "operations") ||
+            (v === "repository" && view === "request"))
+            ? "page"
+            : undefined
+        }
         onClick={() => navigate(k, v)}
       >
         <Icon />
@@ -97,123 +127,92 @@ function ShellContent({
         Skip to content
       </a>
       <Sidebar collapsible="icon">
-        <SidebarHeader className="gap-1.5 border-b border-sidebar-border p-2">
+        <SidebarHeader className="nm-workspace-identity gap-1.5 border-b border-sidebar-border p-2">
           <button
             aria-label="Home"
-            onClick={() => navigate("Guardrail", "repository")}
+            onClick={() => navigate(...homeFor(role))}
             className="flex min-h-11 min-w-0 items-center gap-3 px-2 group-data-[collapsible=icon]:mx-auto group-data-[collapsible=icon]:size-11 group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
           >
             <BrandMark className="size-8 shrink-0" />
           </button>
           <div
-            className="flex h-11 items-center gap-3 rounded-md border border-sidebar-border px-3 text-[13px] group-data-[collapsible=icon]:justify-center group-data-[collapsible=icon]:px-0"
-            title="Default Project"
+            className="flex h-11 items-center rounded-md border border-sidebar-border px-3 text-[13px] group-data-[collapsible=icon]:hidden"
+            title={
+              role === "IT Admin"
+                ? "Technical Operations"
+                : `Control Unit: ${controlUnit}`
+            }
           >
-            <Folder className="size-4 shrink-0 text-muted-foreground" />
-            {!compact && <span>Default Project</span>}
+            {!compact && (
+              <span>
+                {role === "IT Admin"
+                  ? "Technical Operations"
+                  : `Control Unit: ${controlUnit}`}
+              </span>
+            )}
           </div>
         </SidebarHeader>
         <SidebarContent>
           <nav aria-label="NMGR sections" className="flex flex-col py-1">
             <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-semibold">
-                STUDIO
-              </SidebarGroupLabel>
               <SidebarGroupContent>
                 <SidebarMenu>
-                  {(["Guardrail", "Profile"] as Kind[]).map((k) => (
-                    <SidebarMenuItem key={k}>
-                      <SidebarMenuButton
-                        tooltip={`${k}s`}
-                        aria-label={`Studio ${k}s`}
-                        aria-expanded={!compact && expanded[k]}
-                        aria-controls={`studio-${k}`}
-                        onClick={() => {
-                          if (compact) {
-                            setOpen(true);
-                            setExpanded((x) => ({ ...x, [k]: true }));
-                          } else setExpanded((x) => ({ ...x, [k]: !x[k] }));
-                        }}
-                      >
-                        {k === "Guardrail" ? <FileText /> : <Layers />}
-                        <span>{k}s</span>
-                        <ChevronDown
-                          className={`ml-auto transition-transform ${expanded[k] ? "" : "-rotate-90"}`}
-                        />
-                      </SidebarMenuButton>
-                      {!compact && expanded[k] && (
-                        <div
-                          id={`studio-${k}`}
-                          className="ml-4 border-l border-sidebar-border pl-2 py-1"
-                        >
-                          <SidebarMenu>
-                            {nav(k, "repository", "Repository", BookOpen)}
-                            {nav(k, "tests", "Test Base", FlaskConical)}
-                            {nav(k, "signoff", "Sign-Off", CheckCheck)}
-                          </SidebarMenu>
-                        </div>
-                      )}
-                    </SidebarMenuItem>
-                  ))}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-semibold">
-                DEPLOY CONTROL
-              </SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {nav("Guardrail", "deploy", "Deploy Guardrails", FileText)}
-                  {nav("Profile", "deploy", "Deploy Profiles", Layers)}
-                </SidebarMenu>
-              </SidebarGroupContent>
-            </SidebarGroup>
-            <SidebarGroup>
-              <SidebarGroupLabel className="text-primary font-semibold">
-                OPERATION CONTROL
-              </SidebarGroupLabel>
-              <SidebarGroupContent>
-                <SidebarMenu>
-                  {nav("Profile", "dashboard", "Dashboard", LayoutDashboard)}
-                  {nav("Profile", "operations", "Monitoring", ShieldCheck)}
-                  {nav("Profile", "logs", "Activity Log", Activity)}
+                  {workbenchNavigation[role].filter((item) => item.view !== "enforce").map((item) =>
+                    nav(
+                      item.kind,
+                      item.view,
+                      item.label,
+                      item.view === "dashboard"
+                        ? LayoutDashboard
+                        : item.view === "audit"
+                          ? Activity
+                          : item.kind === "Profile"
+                            ? Layers
+                            : FileText,
+                    ),
+                  )}
                 </SidebarMenu>
               </SidebarGroupContent>
             </SidebarGroup>
           </nav>
         </SidebarContent>
         <SidebarFooter className="border-t border-sidebar-border p-2">
-          <AccountMenu
-            compact={compact}
-            mode="mock"
-            currentOwner={owner}
-            owners={accounts}
-            switchOwner={onOwner}
-            busy={busy}
-          />
+          <div className="nm-workbench-switch">
+            {!compact && <label htmlFor="nm-workbench">Workbench</label>}
+            <select
+              id="nm-workbench"
+              aria-label="Workbench"
+              disabled={busy}
+              value={role}
+              onChange={(event) => onOwner(event.target.value)}
+            >
+              {(["User", "User Admin", "IT Admin"] as const).map((value) => (
+                <option key={value} value={value}>
+                  {workbenchLabels[value]}
+                </option>
+              ))}
+            </select>
+          </div>
         </SidebarFooter>
         <SidebarRail />
       </Sidebar>
       <SidebarInset
         className={`nm-app ${["dashboard", "operations", "logs"].includes(view) ? "nm-operations" : ""}`}
       >
-        <header className="sticky top-0 z-30 flex h-16 items-center gap-3 border-b bg-background/94 px-4 backdrop-blur-md sm:px-6 lg:px-8">
-          <SidebarTrigger />
-          <div className="flex items-center gap-1 text-xs">
-            <span className="hidden sm:inline">Default Project</span>
-            <span className="hidden text-muted-foreground sm:inline">/</span>
-            <span className="font-medium">
-              {view === "deploy"
-                ? "Deploy Control"
-                : view === "dashboard"
-                  ? "Dashboard"
-                  : view === "operations"
-                    ? "Monitoring"
-                    : view === "logs"
-                      ? "Activity Log"
-                      : `${kind}s`}
-            </span>
+        <header
+          ref={headerRef}
+          className="nm-workspace-header sticky top-0 z-30 border-b bg-background/94 backdrop-blur-md"
+        >
+          <div className="nm-workspace-title">
+            <SidebarTrigger className="nm-workspace-toggle" />
+            <div className="nm-heading">
+              <h1>{title}</h1>
+              {description && <p className="nm-muted">{description}</p>}
+            </div>
+          </div>
+          <div className="nm-workspace-account">
+            <span className="text-sm font-medium">{actorNames[role]}</span>
+            {actions}
           </div>
         </header>
         <main

@@ -73,7 +73,11 @@ export function ActivityLogs({
         onChange={(e) => set(e.target.value)}
       >
         {options.map((option) => (
-          <option key={option}>{option}</option>
+          <option key={option} value={option}>
+            {label === "Entity" || label === "Profile"
+              ? option === "All" ? "All" : names.get(option) ?? "Unavailable Entity"
+              : option}
+          </option>
         ))}
       </select>
     </label>
@@ -85,7 +89,7 @@ export function ActivityLogs({
           <Search size={17} />
           <Input
             aria-label="Search activity logs"
-            placeholder="Search IDs, names, actions or keywords…"
+            placeholder="Search names, actions or keywords…"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
           />
@@ -135,7 +139,6 @@ export function ActivityLogs({
                 ? ["Time (UTC+08)", "Actor", "Entity", "Action"]
                 : [
                     "Time (UTC+08)",
-                    "Event ID",
                     "Profile",
                     "Guardrail",
                     "Decision",
@@ -156,14 +159,13 @@ export function ActivityLogs({
                 {audit ? (
                   <>
                     <td>{record.actor}</td>
-                    <td>{record.entity}</td>
+                    <td>{names.get(record.entity) ?? "Unavailable Entity"}</td>
                     <td>{record.action}</td>
                   </>
                 ) : (
                   <>
-                    <td>{record.id}</td>
-                    <td>{record.entity}</td>
-                    <td>{record.guardrail}</td>
+                    <td>{names.get(record.entity) ?? "Unavailable Profile"}</td>
+                    <td>{names.get(record.guardrail) ?? "Unavailable Guardrail"}</td>
                     <td>
                       <span className="nm-badge">{record.action}</span>
                     </td>
