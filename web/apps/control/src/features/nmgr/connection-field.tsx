@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useState, type CSSProperties, type ReactNode } from "react";
 import { Eye, EyeOff } from "lucide-react";
 import { Input } from "@/components/ui/input";
 
@@ -12,6 +12,7 @@ export function ConnectionField({
   loading,
   multiline,
   onChange,
+  children,
 }: {
   field: string;
   label: string;
@@ -22,6 +23,7 @@ export function ConnectionField({
   loading: boolean;
   multiline?: boolean;
   onChange: (value: string) => void;
+  children?: ReactNode;
 }) {
   const [shown, setShown] = useState(false);
   const id = `nm-connection-${field}`;
@@ -69,6 +71,7 @@ export function ConnectionField({
         </button>
       </div>
       <p className="nm-muted">{hint}</p>
+      {children}
     </div>
   );
 }

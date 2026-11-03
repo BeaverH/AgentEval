@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { once } from "node:events";
 import { expect, it } from "vitest";
 import { connectionTransport } from "./nmgr-connection-tls";
+import { connectionEnvironment } from "./nmgr-connection-config";
 
 it("trusts a supplied CA for this operation while built-in trust still rejects the self-signed endpoint", async () => {
   const cert = readFileSync(
@@ -32,15 +33,22 @@ it("trusts a supplied CA for this operation while built-in trust still rejects t
     fetch,
   );
   const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  const demo = connectionTransport(connectionEnvironment(new Request("https://ui.test"), {
+    GUARD_API_URL: `https://127.0.0.1:${port}/api/v1`,
+    F5_API_URL: `https://127.0.0.1:${port}/api/v1/backend/v1`,
+  }), fetch);
   try {
     const url = `https://127.0.0.1:${port}/api/v1/account/identity`;
+    expect((await demo.fetcher(url)).status).toBe(200);
+    await expect(demo.fetcher(`https://127.0.0.1:${port}/api/v1/backend/v1/scanners`)).rejects.toThrow();
+    await expect(demo.fetcher(`https://127.0.0.1:${port}/backend/v1/scanners`)).rejects.toThrow();
     await expect(system.fetcher(url)).rejects.toThrow();
     const response = await custom.fetcher(url);
     expect(await response.json()).toEqual({ reachable: true });
     await expect(system.fetcher(url)).rejects.toThrow();
     expect(process.env.NODE_TLS_REJECT_UNAUTHORIZED).toBe(previous);
   } finally {
-    await Promise.all([custom.close(), system.close()]);
+    await Promise.all([custom.close(), system.close(), demo.close()]);
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }

@@ -1,6 +1,11 @@
 import { afterEach, expect, it, vi } from "vitest";
 import { runtimeRequest } from "./runtime-request";
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
+it("displays sanitized backend cause details with HTTP status and operation", async () => {
+  vi.spyOn(console, "error").mockImplementation(() => {});
+  vi.stubGlobal("fetch", async () => Response.json({ error: { code: "nemo_unreachable", message: "Cannot reach NeMo", requestId: "probe-id", details: { operation: "connection.test.nemoToken", causes: [{ code: "ENOTFOUND", message: "DNS lookup failed" }] } } }, { status: 502 }));
+  await expect(runtimeRequest("/api/nmgr/connection/test")).rejects.toThrow(/ENOTFOUND/);
+});
 
 it("explains a static host / API reverse-proxy fallback without displaying HTML", async () => {
   vi.spyOn(console, "error").mockImplementation(() => {});

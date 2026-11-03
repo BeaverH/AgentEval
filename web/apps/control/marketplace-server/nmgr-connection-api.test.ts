@@ -39,6 +39,55 @@ const save = (body: unknown, origin = "https://ui.internal") =>
     headers: { Origin: origin, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+const testConnection = (target: string, settings = {}) => new Request("https://ui.internal/api/nmgr/connection/test", {
+  method: "POST", headers: { Origin: "https://ui.internal", "Content-Type": "application/json" },
+  body: JSON.stringify({ target, settings }),
+});
+
+it("tests NeMo URL without a token or database and never saves the candidate", async () => {
+  const saved = await store();
+  const response = await nmgrRequest(testConnection("nemoUrl", { nemoUrl: env.GUARD_API_URL }), {},
+    async (_url, init) => {
+      expect(new Headers(init?.headers).has("authorization")).toBe(false);
+      return Response.json({ error: { code: "unauthenticated" } }, { status: 401 });
+    }, saved);
+  expect(response.status).toBe(200);
+  expect(await response.json()).toMatchObject({ ok: true, target: "nemoUrl", httpStatus: 401 });
+  expect(await saved.read()).toBeNull();
+});
+it("tests Token independently, rejects HTML and does not accept identity without policies/guardrails write access", async () => {
+  const saved = await store();
+  for (const upstream of [new Response("<html>login</html>", { headers: { "Content-Type": "text/html" } }), Response.json({ userId: "u", effectivePermissions: { policies: "read" } })]) {
+    const response = await nmgrRequest(testConnection("nemoToken"), { GUARD_API_URL: env.GUARD_API_URL, GUARD_API_TOKEN: env.GUARD_API_TOKEN }, async () => upstream, saved);
+    expect(response.ok).toBe(false);
+    expect((await response.json()).error.component).toBe("nemo");
+  }
+  const success = await nmgrRequest(testConnection("nemoToken"), { GUARD_API_URL: env.GUARD_API_URL, GUARD_API_TOKEN: env.GUARD_API_TOKEN },
+    async () => Response.json({ userId: "u", effectivePermissions: { policies: "write", guardrails: "write" } }), saved);
+  expect(success.status).toBe(200);
+  expect(await saved.read()).toBeNull();
+});
+it("retains nested connection errors in both response and log, with credentials redacted", async () => {
+  const log = vi.spyOn(console, "error").mockImplementation(() => {});
+  const saved = await store();
+  const response = await nmgrRequest(testConnection("nemoToken"), env, async () => {
+    throw new TypeError("fetch failed", { cause: Object.assign(new Error(`connect ECONNREFUSED token=${env.GUARD_API_TOKEN}`), { code: "ECONNREFUSED", syscall: "connect" }) });
+  }, saved);
+  const body = await response.json();
+  expect(body.error).toMatchObject({ component: "nemo", details: { causes: expect.arrayContaining([expect.objectContaining({ code: "ECONNREFUSED" })]) } });
+  expect(JSON.stringify(log.mock.calls)).toContain("ECONNREFUSED");
+  expect(JSON.stringify([body, log.mock.calls])).not.toContain(env.GUARD_API_TOKEN);
+});
+it("does not forward existing tokens to changed probe destinations", async () => {
+  const response = await nmgrRequest(testConnection("nemoToken", { nemoUrl: "https://other.test/api/v1" }), env, identity, await store());
+  expect(response.status).toBe(422);
+  expect(identity).not.toHaveBeenCalled();
+});
+it("ignores unrelated changed URLs when an external UI submits its complete form for a single probe", async () => {
+  const response = await nmgrRequest(testConnection("databaseUrl", { databaseUrl: "invalid-db-url", nemoUrl: "https://changed.test/api/v1", f5Url: "https://changed-f5.test/backend/v1" }), env, identity, await store());
+  expect((await response.json()).error).toMatchObject({ component: "database", code: "database_config_invalid" });
+  expect(identity).not.toHaveBeenCalled();
+});
 afterEach(async () => {
   vi.restoreAllMocks();
   identity.mockClear();

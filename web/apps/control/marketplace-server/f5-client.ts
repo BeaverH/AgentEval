@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { z } from "zod";
 import { StoreError } from "./marketplace-db";
-import { DeploymentError } from "./diagnostics";
+import { DeploymentError, upstreamFailure } from "./diagnostics";
 import type { UnifiedConfig } from "../src/features/business-demo/evaluation";
 
 export type F5Configuration = { base: string; token: string; sourceId: string; adminIds: string[] };
@@ -28,9 +28,9 @@ export function createF5Client(config: F5Configuration, fetcher: typeof fetch = 
     try { response = await fetcher(`${config.base}${path}`, { method, redirect: "manual", signal: AbortSignal.timeout(20_000),
       headers: { Authorization: `Bearer ${config.token}`, Accept: "application/json", ...(body === undefined ? {} : { "Content-Type": "application/json" }) },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }) }); }
-    catch { throw new DeploymentError("f5", "f5_unreachable", "F5 connection failed or timed out. Check URL, DNS, network and TLS CA. Reconcile before retrying a write.", undefined, 502); }
-    if (!response.ok) throw new DeploymentError("f5", `f5_http_${response.status}`, `F5 request failed (${response.status}). Check permissions, configuration and backend logs.`, undefined, response.status >= 400 && response.status < 500 ? response.status : 502);
-    if (!response.headers.get("content-type")?.includes("application/json")) throw new DeploymentError("f5", "f5_response_invalid", "F5 returned an incompatible response. Check F5_API_URL, gateway routing and API compatibility.", undefined, 502);
+    catch (error) { throw new DeploymentError("f5", "f5_unreachable", "F5 connection failed or timed out. Check URL, DNS, network and TLS CA. Reconcile before retrying a write.", undefined, 502, error); }
+    if (!response.ok) throw await upstreamFailure("f5", `f5_http_${response.status}`, `F5 request failed (${response.status}). Check permissions, configuration and backend logs.`, response);
+    if (!response.headers.get("content-type")?.includes("application/json")) throw await upstreamFailure("f5", "f5_response_invalid", "F5 returned an incompatible response. Check F5_API_URL, gateway routing and API compatibility.", response);
     try { return await response.json(); } catch { throw new DeploymentError("f5", "f5_response_invalid", "F5 returned invalid JSON.", undefined, 502); }
   } };
 }

@@ -102,7 +102,14 @@
 }
 .nm-connection-error {
   overflow-wrap: anywhere;
+  white-space: pre-wrap;
+  max-height: 360px;
+  overflow-y: auto;
 }
+.nm-connection-probe { display: grid; justify-items: start; gap: 8px; }
+.nm-connection-result { width: 100%; min-width: 0; margin: 0; padding: 12px; border: 1px solid var(--border); border-radius: var(--radius-control); white-space: pre-wrap; overflow-wrap: anywhere; max-height: 320px; overflow-y: auto; font: 12px/1.6 ui-monospace, monospace; }
+.nm-connection-result.is-success { color: #047857; background: color-mix(in srgb, #047857 5%, var(--background)); }
+.nm-connection-result.is-error { color: var(--destructive); background: color-mix(in srgb, var(--destructive) 5%, var(--background)); }
 .nm-connection-advanced {
   border-top: 1px solid var(--border);
   padding-top: 14px;

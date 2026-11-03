@@ -14,7 +14,15 @@ type Field =
   | "f5Url"
   | "f5Token"
   | "f5AdminIds";
-type Option = "databaseTls" | "caMode" | "f5Mode";
+type Option = "databaseTls" | "caMode" | "f5Mode" | "nemoTls";
+type Probe = "nemoUrl" | "nemoToken" | "databaseUrl" | "f5Url" | "f5Token";
+const probeFields: Record<Probe, Array<Field | Option>> = {
+  nemoUrl: ["nemoUrl", "nemoTls", "caMode", "caPem"],
+  nemoToken: ["nemoUrl", "nemoToken", "nemoTls", "caMode", "caPem"],
+  databaseUrl: ["databaseUrl", "databaseTls", "caMode", "caPem"],
+  f5Url: ["f5Url", "f5Token", "f5Mode", "caMode", "caPem"],
+  f5Token: ["f5Url", "f5Token", "f5Mode", "caMode", "caPem"],
+};
 type Status = {
   saved?: boolean;
   configured?: Partial<Record<Field, boolean>>;
@@ -47,7 +55,7 @@ const fields: Array<{ key: Field; label: string; hint: string }> = [
   {
     key: "caPem",
     label: "Trusted CA certificate",
-    hint: "PEM certificate bundle for NeMo, F5 and database TLS. Certificate verification stays enabled.",
+    hint: "PEM certificate bundle for verified NeMo, F5 and database TLS connections.",
   },
   {
     key: "f5Url",
@@ -76,6 +84,7 @@ const emptyValues: Record<Field, string> = {
   f5AdminIds: "",
 };
 const emptyOptions: Record<Option, string> = {
+  nemoTls: "",
   databaseTls: "",
   caMode: "",
   f5Mode: "",
@@ -98,6 +107,8 @@ export function ConnectionSetup({
     [loading, setLoading] = useState(true),
     [busy, setBusy] = useState(false);
   const [error, setError] = useState(initialError);
+  const [testing, setTesting] = useState<Probe | null>(null);
+  const [results, setResults] = useState<Partial<Record<Probe, { ok: boolean; message: string }>>>({});
   const [values, setValues] = useState(emptyValues),
     [options, setOptions] = useState(emptyOptions);
   useEffect(() => {
@@ -117,7 +128,7 @@ export function ConnectionSetup({
     };
   }, []);
   async function apply(remove = false) {
-    if (busy) return;
+    if (busy || testing) return;
     setBusy(true);
     setError("");
     try {
@@ -152,7 +163,23 @@ export function ConnectionSetup({
       setBusy(false);
     }
   }
-  const disabled = busy || loading || status?.manualConfiguration === false;
+  async function test(target: Probe) {
+    if (busy || testing) return;
+    setTesting(target);
+    setResults(current => ({ ...current, [target]: undefined }));
+    try {
+      const entered = { ...values, ...options };
+      const result = await runtimeRequest<{ message: string; durationMs: number }>("/api/nmgr/connection/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(status?.connectionRevision ? { "X-Marketplace-Connection": status.connectionRevision } : {}) },
+        body: JSON.stringify({ target, settings: Object.fromEntries(probeFields[target].filter(key => entered[key].trim()).map(key => [key, entered[key]])) }),
+      });
+      setResults(current => ({ ...current, [target]: { ok: true, message: `${result.message} (${result.durationMs} ms)` } }));
+    } catch (error) {
+      setResults(current => ({ ...current, [target]: { ok: false, message: error instanceof Error ? error.message : "Connection test failed." } }));
+    } finally { setTesting(null); }
+  }
+  const disabled = busy || !!testing || loading || status?.manualConfiguration === false;
   const field = (key: Field) => {
     const definition = fields.find((item) => item.key === key)!;
     return (
@@ -166,10 +193,20 @@ export function ConnectionSetup({
         disabled={disabled}
         loading={loading}
         multiline={key === "caPem"}
-        onChange={(value) =>
-          setValues((current) => ({ ...current, [key]: value }))
-        }
-      />
+        onChange={(value) => {
+          setValues((current) => ({ ...current, [key]: value }));
+          setResults({});
+        }}
+      >
+        {key in probeFields && <div className="nm-connection-probe">
+          <Button type="button" variant="outline" size="sm" disabled={disabled} onClick={() => void test(key as Probe)}>
+            {testing === key ? "Testing…" : `Test ${definition.label}`}
+          </Button>
+          {results[key as Probe] && <pre role={results[key as Probe]!.ok ? "status" : "alert"} className={`nm-connection-result ${results[key as Probe]!.ok ? "is-success" : "is-error"}`}>
+            {results[key as Probe]!.message}
+          </pre>}
+        </div>}
+      </ConnectionField>
     );
   };
   const choice = (
@@ -183,9 +220,10 @@ export function ConnectionSetup({
         aria-label={label}
         value={options[key]}
         disabled={disabled}
-        onChange={(event) =>
-          setOptions((current) => ({ ...current, [key]: event.target.value }))
-        }
+        onChange={(event) => {
+          setOptions((current) => ({ ...current, [key]: event.target.value }));
+          setResults({});
+        }}
       >
         <option value="">
           Keep current ({status?.advanced?.[key] ?? "deployment default"})
@@ -226,6 +264,10 @@ export function ConnectionSetup({
           autoComplete="off"
         >
           {field("nemoUrl")}
+          {choice("nemoTls", "NeMo certificate verification", [
+            ["skip", "Skip verification (demo default)"],
+            ["verify", "Verify certificate"],
+          ])}
           {field("nemoToken")}
           {field("databaseUrl")}
           <details className="nm-connection-advanced">
@@ -273,7 +315,7 @@ export function ConnectionSetup({
             <Button
               type="button"
               variant="outline"
-              disabled={busy}
+              disabled={busy || !!testing}
               onClick={onRetry}
             >
               {retryLabel}
@@ -282,7 +324,7 @@ export function ConnectionSetup({
               <Button
                 type="button"
                 variant="ghost"
-                disabled={busy}
+                disabled={busy || !!testing}
                 onClick={onCancel}
               >
                 Cancel
@@ -303,6 +345,7 @@ export function ConnectionSetup({
           <a href="/v2/guardrails" className="underline">
             Open Mock workspace
           </a>
+          <a href="/api/docs" className="underline">API documentation</a>
         </div>
       </section>
     </main>

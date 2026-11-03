@@ -14,10 +14,20 @@ import { runtimeResponse } from "./guard-api";
 import { DeploymentError, diagnosticResponse } from "./diagnostics";
 import { connectionTransport } from "./nmgr-connection-tls";
 import { createF5Client, f5Configuration } from "./f5-client";
+import { withConnectionDiagnostics } from "./connection-diagnostics";
+import { probeConnection, type ProbeTarget } from "./connection-probe";
+import { connectionTestSchema } from "./nmgr-contract";
 
 const stores = new Map<string, ConnectionStore>();
 const locks = new WeakMap<ConnectionStore, Promise<unknown>>();
 const revisionKey = randomBytes(32);
+const probeFields: Record<ProbeTarget, string[]> = {
+  nemoUrl: ["nemoUrl", "nemoTls", "caMode", "caPem"],
+  nemoToken: ["nemoUrl", "nemoToken", "nemoTls", "caMode", "caPem"],
+  databaseUrl: ["databaseUrl", "databaseTls", "caMode", "caPem"],
+  f5Url: ["f5Url", "f5Mode", "caMode", "caPem"],
+  f5Token: ["f5Url", "f5Token", "f5Mode", "caMode", "caPem"],
+};
 function defaultStore(env: NodeJS.ProcessEnv) {
   const dir =
     env.MARKETPLACE_CONNECTION_DIR || join(tmpdir(), "marketplace-connection");
@@ -44,6 +54,7 @@ function revision(env: NodeJS.ProcessEnv) {
         env.MARKETPLACE_DB_CA_PEM,
         env.MARKETPLACE_CONNECTION_CA_MODE,
         env.MARKETPLACE_CONNECTION_CA_PEM,
+        env.MARKETPLACE_NEMO_TLS,
         env.MARKETPLACE_WORKSPACE_ID,
         env.MARKETPLACE_F5_ENABLED,
         env.F5_API_URL,
@@ -77,6 +88,7 @@ function state(effective: NodeJS.ProcessEnv, saved: ConnectionSettings | null) {
       f5AdminIds: !!effective.F5_PROJECT_ADMIN_IDS,
     },
     advanced: {
+      nemoTls: effective.MARKETPLACE_NEMO_TLS || "verify",
       databaseTls: effective.MARKETPLACE_DB_TLS === "true" ? "true" : "url",
       caMode: effective.MARKETPLACE_CONNECTION_CA_MODE || "deployment",
       f5Mode:
@@ -141,7 +153,7 @@ export async function nmgrRequest(
   fetcher: typeof fetch = fetch,
   store = defaultStore(env),
 ) {
-  if (new URL(request.url).pathname === "/api/nmgr/connection")
+  if (["/api/nmgr/connection", "/api/nmgr/connection/test"].includes(new URL(request.url).pathname))
     return connectionApi(request, env, fetcher, store);
   try {
     const saved = await savedFor(env, store),
@@ -149,7 +161,7 @@ export async function nmgrRequest(
     assertRevision(request, effective);
     const transport = connectionTransport(effective, fetcher);
     try {
-      return await nmgrApi(request, effective, transport.fetcher);
+      return await withConnectionDiagnostics(effective, `nmgr.${new URL(request.url).pathname.split("/").pop()}`, () => nmgrApi(request, effective, transport.fetcher));
     } finally {
       await transport.close();
     }
@@ -169,8 +181,11 @@ export async function connectionApi(
   fetcher: typeof fetch = fetch,
   store = defaultStore(env),
 ): Promise<Response> {
+  const testing = new URL(request.url).pathname === "/api/nmgr/connection/test";
+  let target: ProbeTarget | undefined;
   try {
     connectionOrigin(request, env);
+    if (testing && request.method !== "POST") throw new DeploymentError("runtime", "connection_method_invalid", "Use POST to test a connection.", [], 405);
     if (request.method === "GET") {
       const saved = await savedFor(env, store);
       return json(
@@ -213,7 +228,12 @@ export async function connectionApi(
           413,
         );
       try {
-        input = connectionSettingsSchema.parse(JSON.parse(raw));
+        const payload = JSON.parse(raw);
+        if (testing) {
+          const parsed = connectionTestSchema.parse(payload);
+          target = parsed.target;
+          input = Object.fromEntries(Object.entries(parsed.settings ?? {}).filter(([key]) => probeFields[target!].includes(key)));
+        } else input = connectionSettingsSchema.parse(payload);
       } catch {
         throw new DeploymentError(
           "runtime",
@@ -246,6 +266,7 @@ export async function connectionApi(
       }
       if (
         input.nemoUrl &&
+        target !== "nemoUrl" &&
         input.nemoUrl.replace(/\/+$/, "") !==
           previous.GUARD_API_URL?.replace(/\/+$/, "") &&
         !input.nemoToken
@@ -266,6 +287,7 @@ export async function connectionApi(
       if (
         candidate.f5Mode !== "disabled" &&
         input.f5Url &&
+        target !== "f5Url" &&
         input.f5Url.replace(/\/+$/, "") !==
           previous.F5_API_URL?.replace(/\/+$/, "") &&
         !input.f5Token
@@ -279,13 +301,21 @@ export async function connectionApi(
         );
       const effective = connectionEnvironment(request, env, candidate);
       const transport = connectionTransport(effective, fetcher);
+      if (target) {
+        try {
+          return await withConnectionDiagnostics(effective, `connection.test.${target}`, async () => {
+            try { return json(await probeConnection(target!, effective, transport.fetcher)); }
+            catch (error) { return diagnosticResponse(error, target === "databaseUrl" ? "database" : target!.startsWith("f5") ? "f5" : "nemo", `connection.test.${target}`, "Connection test failed. Inspect the diagnostic details."); }
+          });
+        } finally { await transport.close(); }
+      }
       let probe: Response;
       try {
-        probe = await nmgrApi(
+        probe = await withConnectionDiagnostics(effective, "connection.save", () => nmgrApi(
           new Request(new URL("/api/nmgr/workspace", request.url)),
           effective,
           transport.fetcher,
-        );
+        ));
         if (
           probe.ok &&
           candidate.f5Mode !== "disabled" &&
@@ -293,7 +323,10 @@ export async function connectionApi(
         ) {
           const f5 = f5Configuration(effective);
           if (f5)
-            await createF5Client(f5, transport.fetcher).request("/scanners");
+            await withConnectionDiagnostics(effective, "connection.save.f5", async () => {
+              try { await createF5Client(f5, transport.fetcher).request("/scanners"); }
+              catch (error) { probe = diagnosticResponse(error, "f5", "connection.save.f5", "F5 connection failed."); }
+            });
         }
       } catch (error) {
         await closeChanged(effective, previous);

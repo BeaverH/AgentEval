@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { StoreError } from "./marketplace-db";
-import { DeploymentError } from "./diagnostics";
+import { DeploymentError, upstreamFailure } from "./diagnostics";
 
 type Session = { cookie: string };
 type Entry = { pending?: Promise<Session>; failedUntil: number };
@@ -83,8 +83,7 @@ function nemoTokenFetch(env: NodeJS.ProcessEnv, fetcher: typeof fetch): typeof f
     // No redirect following or retries: failed writes may already have reached NeMo.
     const response = await fetcher(target.href, { ...init, headers, redirect: "manual", signal: init.signal ?? AbortSignal.timeout(20_000) });
     if (response.status === 401 || response.status === 403) {
-      await response.body?.cancel();
-      throw new DeploymentError("nemo", "nemo_token_rejected", "NeMo backend token was rejected. Check its validity and permissions.", ["GUARD_API_TOKEN", "GUARD_API_TOKEN_FILE"]);
+      throw await upstreamFailure("nemo", "nemo_token_rejected", "NeMo backend token was rejected. Check its validity and permissions.", response, 503);
     }
     return response;
   };

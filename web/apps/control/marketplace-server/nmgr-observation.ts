@@ -46,6 +46,6 @@ export async function observeResource(e: Entity, binding: NmgrBinding | undefine
   } catch (error) {
     if (error instanceof StoreError && error.status === 404) return result("missing", "Not found in backend");
     const failure = reportFailure(error, e.provider === "F5" ? "f5" : "nemo", "resource.observe", "Query failed; check permissions, connection and backend compatibility");
-    return result("unavailable", `[${failure.code}] ${failure.message} Check: ${failure.settings.join(", ")}. Reference: ${failure.requestId}`);
+    return result("unavailable", `[${failure.code}] ${failure.message} Check: ${failure.settings.join(", ")}. Reference: ${failure.requestId}${failure.details ? `\n${JSON.stringify(failure.details, null, 2)}` : ""}`);
   }
 }

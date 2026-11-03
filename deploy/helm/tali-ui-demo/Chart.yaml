@@ -2,5 +2,5 @@ apiVersion: v2
 name: tali-ui-demo
 description: AI Marketplace Guardrails and Profiles with mock or live Guard API access
 type: application
-version: 0.2.23
-appVersion: "0.2.23"
+version: 0.2.24
+appVersion: "0.2.24"

@@ -1,5 +1,12 @@
 # AI Marketplace server
 
+The primary live backend contract is now `/api/nmgr/*`, shared by the bundled V3
+UI and external frontends behind the same-origin API gateway. It orchestrates real
+NeMo Policy/Guardrail and F5 Scanner/Project operations with durable workflow state.
+Use `/api/docs` (offline Swagger), `/api/openapi.json`, and `/api/endpoints`.
+See [the API inventory, workflow and deployment contract](../../../../docs/integration-api.md).
+The legacy APIs listed below are retained for older UI modes, not the formal V3 integration contract.
+
 The Node/Nitro server serves the Guardrails and Profiles UI and provides:
 
 - `/api/demo-state`: shared SQLite state in mock/auto mode, with revision conflict handling, trace retention and size protection.

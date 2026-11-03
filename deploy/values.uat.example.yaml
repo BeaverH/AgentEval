@@ -1,10 +1,10 @@
-# V3 demo connection defaults for v0.2.23.
+# V3 demo connection defaults for v0.2.24.
 # Deploy Marketplace only. Use existing NeMo and PostgreSQL (or MariaDB).
 replicaCount: 1
 fullnameOverride: marketplace-v2
 image:
   repository: registry.example.internal/marketplace-ui
-  tag: "0.2.23"
+  tag: "0.2.24"
 openshift:
   enabled: true
   route:
@@ -15,6 +15,8 @@ marketplace:
   dataMode: live
   v2Live: true
   guardApiUrl: https://nemo.example.internal/api/v1
+  # Default V3 skips certificate verification only for the NeMo API.
+  # Set nemoTls: verify to require trusted certificates. F5/DB TLS is unchanged.
   # The chart defaults read both credentials from the existing Secret `tali`:
   # Token: tali-guard-bootstrap-user-ini (raw business PAT, no Bearer prefix)
   # Database URL: tali-guard-postgresql-init (complete URL including password)

@@ -39,7 +39,7 @@ jobs:
           image="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/tali-ui-demo"
           image_tag="sha-${GITHUB_SHA::12}-${GITHUB_RUN_ID}"
           storage=browser
-          chart_version="0.2.23-dev.${GITHUB_RUN_NUMBER}"
+          chart_version="0.2.24-dev.${GITHUB_RUN_NUMBER}"
           tags=("${image}:${image_tag}")
           if [[ "${GITHUB_EVENT_NAME}" == "pull_request" ]]; then
             tags+=("${image}:pr-${{ github.event.pull_request.number }}")
@@ -53,7 +53,7 @@ jobs:
             branch="${branch//_/-}"
             tags+=("${image}:${branch}")
             if [[ "${GITHUB_REF_NAME}" == "main" ]]; then
-              chart_version="0.2.23-main.${GITHUB_RUN_NUMBER}"
+              chart_version="0.2.24-main.${GITHUB_RUN_NUMBER}"
               tags+=("${image}:latest")
             fi
           fi
@@ -133,6 +133,12 @@ jobs:
             curl --fail http://127.0.0.1:18082/v2/import > /dev/null
             curl --fail http://127.0.0.1:18082/v2-mock/guardrails > /dev/null
             curl --fail http://127.0.0.1:18082/v3/guardrails > /dev/null
+            curl --fail http://127.0.0.1:18082/api/docs | grep 'SwaggerUIBundle'
+            curl --fail http://127.0.0.1:18082/api/docs/swagger-ui-bundle.js > /dev/null
+            curl --fail http://127.0.0.1:18082/api/docs/swagger-ui.css > /dev/null
+            curl --fail http://127.0.0.1:18082/api/openapi.json | jq -e '.openapi == "3.1.0" and .paths["/api/nmgr/connection/test"].post != null'
+            curl --fail http://127.0.0.1:18082/api/endpoints > /dev/null
+            curl --fail http://127.0.0.1:18082/api/nmgr/connection | jq -e '.advanced.nemoTls == "skip"'
             docker cp "$container:/opt/tali/helm/tali-UI-demo.tgz" "artifacts/tali-ui-demo-${CHART_VERSION}.tgz"
             docker cp "$container:/opt/tali/source/project-source.zip" artifacts/project-source.zip
             docker cp "$container:/opt/tali/source/project-source.zip.sha256" artifacts/project-source.zip.sha256
@@ -140,6 +146,8 @@ jobs:
             unzip -t artifacts/project-source.zip >/dev/null
             unzip -l artifacts/project-source.zip | grep 'project/web/apps/control/src/features/business-demo/profile-operations.tsx'
             unzip -l artifacts/project-source.zip | grep 'project/scripts/uat/verify-ui-isolation.mjs'
+            unzip -l artifacts/project-source.zip | grep 'project/docs/integration-api.md'
+            unzip -l artifacts/project-source.zip | grep 'project/web/apps/control/marketplace-server/openapi.ts'
             unzip -l artifacts/project-source.zip | grep 'project/web/apps/control/marketplace-server/fixtures/connection-tls/localhost-test-key.txt'
             docker exec "$container" test -f /opt/marketplace/check-nemo.mjs
             docker rm -f "$container"
@@ -169,6 +177,9 @@ jobs:
           container=""
           helm lint "$chart"
           helm template tali-ui-demo "$chart" > artifacts/mock.yaml
+          grep -A1 'name: MARKETPLACE_NEMO_TLS' artifacts/mock.yaml | grep 'value: "skip"'
+          helm template tali-ui-demo "$chart" --set marketplace.nemoTls=verify > artifacts/nemo-tls-verify.yaml
+          grep -A1 'name: MARKETPLACE_NEMO_TLS' artifacts/nemo-tls-verify.yaml | grep 'value: "verify"'
           helm template tali-ui-demo "$chart" --set openshift.enabled=true > artifacts/ocp.yaml
           if grep -Eq 'PersistentVolumeClaim|claimName:|runAsUser:|fsGroup:' artifacts/ocp.yaml; then
             echo 'OCP template unexpectedly requires a PVC or fixed UID'; exit 1

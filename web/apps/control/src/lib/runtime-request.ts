@@ -1,8 +1,8 @@
-type Failure = { code?: string | undefined; component?: string | undefined; message?: string | undefined; settings?: string[] | undefined; requestId?: string | undefined };
+type Failure = { code?: string | undefined; component?: string | undefined; message?: string | undefined; settings?: string[] | undefined; requestId?: string | undefined; details?: Record<string, unknown> | undefined };
 export function runtimeFailure(details: Failure, path: string, status?: number) {
   const requestId = details.requestId ?? crypto.randomUUID();
-  console.error(JSON.stringify({ event: "workspace_request_failed", path: path.split("?")[0], status, code: details.code, component: details.component, requestId }));
-  return new Error(`[${details.code ?? "api_error"}] ${details.component ? `${details.component}: ` : ""}${details.message ?? "The operation failed."}${details.settings?.length ? ` Check: ${details.settings.join(", ")}.` : ""} Reference: ${requestId}`);
+  console.error(JSON.stringify({ event: "workspace_request_failed", path: path.split("?")[0], status, code: details.code, component: details.component, requestId, details: details.details }));
+  return new Error(`[${details.code ?? "api_error"}] ${details.component ? `${details.component}: ` : ""}${details.message ?? "The operation failed."}${details.settings?.length ? ` Check: ${details.settings.join(", ")}.` : ""} Reference: ${requestId}${details.details ? `\nHTTP ${status ?? "unknown"}\n${JSON.stringify(details.details, null, 2)}` : ""}`);
 }
 
 // A SPA host can answer /api with HTML and HTTP 200. Do not treat it as data,
@@ -28,7 +28,15 @@ export async function runtimeRequest<T = any>(path: string, init: RequestInit = 
   if (!response.ok) {
     const source = value.error && typeof value.error === "object" ? value.error : {};
     const text = (v: unknown) => typeof v === "string" ? v.slice(0, 1200) : undefined;
-    throw runtimeFailure({ code: text(source.code), component: text(source.component), message: text(source.message) ?? `API request failed (HTTP ${response.status}). Check authentication, permissions and server logs.`, settings: Array.isArray(source.settings) ? source.settings.filter((s: unknown) => typeof s === "string" && /^[A-Z][A-Z0-9_]{1,80}$/.test(s)).slice(0, 20) : [], requestId: text(source.requestId) ?? response.headers.get("x-request-id") ?? undefined }, path, response.status);
+    const raw = source.details;
+    const details = raw && typeof raw === "object" && !Array.isArray(raw) ? {
+      operation: text(raw.operation), certificateVerification: text(raw.certificateVerification),
+      httpStatus: typeof raw.httpStatus === "number" ? raw.httpStatus : undefined,
+      contentType: text(raw.contentType), upstreamCode: text(raw.upstreamCode), upstreamMessage: text(raw.upstreamMessage),
+      causes: Array.isArray(raw.causes) ? raw.causes.slice(0, 8).filter((v: unknown) => v && typeof v === "object").map((v: any) => ({ name: text(v.name), code: text(v.code), message: text(v.message), syscall: text(v.syscall) })) : undefined,
+      hints: Array.isArray(raw.hints) ? raw.hints.slice(0, 8).map(text).filter(Boolean) : undefined,
+    } : undefined;
+    throw runtimeFailure({ code: text(source.code), component: text(source.component), message: text(source.message) ?? `API request failed (HTTP ${response.status}). Check authentication, permissions and server logs.`, settings: Array.isArray(source.settings) ? source.settings.filter((s: unknown) => typeof s === "string" && /^[A-Z][A-Z0-9_]{1,80}$/.test(s)).slice(0, 20) : [], requestId: text(source.requestId) ?? response.headers.get("x-request-id") ?? undefined, details }, path, response.status);
   }
   return value as T;
 }

@@ -1,7 +1,14 @@
 # AI Marketplace
 
 AI Marketplace manages **Guardrails** and **Profiles**. Current release:
-**v0.2.23**, image `ghcr.io/idddd/tali-ui-demo:0.2.23`.
+**v0.2.24**, image `ghcr.io/idddd/tali-ui-demo:0.2.24`.
+
+The current source also exposes the real NeMo/F5 integration backend for a separate
+UI behind the same-origin `/api` gateway. Interactive Swagger is at `/api/docs`,
+OpenAPI at `/api/openapi.json`, and the API inventory at `/api/endpoints`.
+The bundled V3 UI remains available for quick deployment and connection testing;
+V2 remains independent Mock. See [integration API and frontend contract](docs/integration-api.md).
+Version 0.2.24 includes these APIs, independent connection tests, and detailed masked diagnostics.
 
 ## Current UI
 
@@ -31,9 +38,9 @@ Control Unit filters always include ISS, RMG, LCS, Line 1.5, and Line 2.
 Requires Docker. Default demo data is stored in browser localStorage; no database is used.
 
 ```sh
-docker pull ghcr.io/idddd/tali-ui-demo:0.2.23
+docker pull ghcr.io/idddd/tali-ui-demo:0.2.24
 docker run -d --name ai-marketplace -p 18082:8080 \
-  ghcr.io/idddd/tali-ui-demo:0.2.23
+  ghcr.io/idddd/tali-ui-demo:0.2.24
 ```
 
 Open [V1](http://127.0.0.1:18082/v1/) or [V2](http://127.0.0.1:18082/v2/).

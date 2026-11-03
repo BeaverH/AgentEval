@@ -30,6 +30,8 @@ marketplace:
   demoStorage: browser
   dataMode: mock
   guardApiUrl: ""
+  # V3 demo only: skip or verify NeMo HTTPS certificates. Other TLS remains unchanged.
+  nemoTls: skip
   # NeMo's trusted public origin when guardApiUrl uses an internal service hostname.
   guardAuthOrigin: ""
   # Existing Secret containing GUARD_USERNAME and GUARD_PASSWORD.

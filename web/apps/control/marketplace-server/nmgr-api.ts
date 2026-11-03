@@ -5,7 +5,7 @@ import { guardConfig, guardProxy } from "./guard-api";
 import { hasNemoCredentials, nemoServiceFetch } from "./nemo-session";
 import { StoreError } from "./marketplace-db";
 import { databaseCacheKey, databaseConfig } from "./storage/config";
-import { DeploymentError, diagnosticResponse, type Component } from "./diagnostics";
+import { DeploymentError, diagnosticResponse, upstreamFailure, type Component } from "./diagnostics";
 import { openDatabase } from "./storage/database";
 import { NmgrService, type NmgrActor, type NmgrRemote } from "./nmgr";
 import { createF5Client, f5Configuration } from "./f5-client";
@@ -69,10 +69,11 @@ export async function nmgrApi(request: Request, env = process.env, fetcher: type
     if (config.demo) {
       let response: Response;
       try { response = await serviceFetch!(`${config.base}/account/identity`, { headers: { Accept: "application/json" } }); }
-      catch (error) { if (error instanceof DeploymentError) throw error; throw new DeploymentError("nemo", "nemo_unreachable", "Cannot reach NeMo. Check the URL, network and trusted TLS CA."); }
-      if (!response.ok) throw new DeploymentError("nemo", "nemo_identity_rejected", "NeMo rejected the configured token. Check the business API token and NeMo permissions.");
+      catch (error) { if (error instanceof DeploymentError) throw error; throw new DeploymentError("nemo", "nemo_unreachable", "Cannot reach NeMo. Check the URL, network and TLS settings.", undefined, 503, error); }
+      if (!response.ok) throw await upstreamFailure("nemo", "nemo_identity_rejected", "NeMo identity request failed. Check the URL, gateway and token permissions.", response, 503);
+      if (!response.headers.get("content-type")?.includes("application/json")) throw await upstreamFailure("nemo", "nemo_response_invalid", "NeMo identity returned non-JSON content. Check the URL and API routing.", response);
       let identity: any;
-      try { identity = await response.json(); } catch { throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo identity returned invalid JSON. Check the URL and API routing."); }
+      try { identity = await response.json(); } catch (error) { throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo identity returned invalid JSON. Check the URL and API routing.", undefined, 503, error); }
       if (typeof identity.userId !== "string" || !identity.userId) throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo identity is incompatible. Check the URL and API version.");
       const requested = request.headers.get("x-marketplace-role") ?? "User";
       if (!["User", "User Admin", "IT Admin"].includes(requested)) throw new StoreError(422, "Choose a supported demo workbench role.");
@@ -113,11 +114,11 @@ export async function nmgrApi(request: Request, env = process.env, fetcher: type
       try { response = await (serviceFetch ?? fetcher)(`${config.base}${path}`, { method, redirect: "manual", signal: AbortSignal.timeout(20_000),
         headers: { ...(!serviceFetch ? { Authorization: request.headers.get("authorization")! } : {}), Accept: "application/json", ...(body ? { "Content-Type": "application/json" } : {}) },
         ...(body ? { body: JSON.stringify(body) } : {}) }); }
-      catch (error) { if (error instanceof DeploymentError) throw error; throw new DeploymentError("nemo", "nemo_unreachable", "Cannot reach NeMo. Check URL, DNS, network, TLS CA and authentication. Reconcile before retrying a write.", undefined, 502); }
-      if (!response.headers.get("content-type")?.includes("application/json")) throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo returned a non-JSON response. Check GUARD_API_URL, gateway routing and API compatibility.", undefined, 502);
+      catch (error) { if (error instanceof DeploymentError) throw error; throw new DeploymentError("nemo", "nemo_unreachable", "Cannot reach NeMo. Check URL, DNS, network, TLS settings and authentication. Reconcile before retrying a write.", undefined, 502, error); }
+      if (!response.ok) throw await upstreamFailure("nemo", `nemo_http_${response.status}`, `NeMo rejected the operation (HTTP ${response.status}). Check token permissions, request configuration and NeMo logs. Reconcile before retrying a write.`, response);
+      if (!response.headers.get("content-type")?.includes("application/json")) throw await upstreamFailure("nemo", "nemo_response_invalid", "NeMo returned a non-JSON response. Check GUARD_API_URL, gateway routing and API compatibility.", response);
       let result: any;
-      try { result = await response.json(); } catch { throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo returned invalid JSON. Check the gateway and API compatibility.", undefined, 502); }
-      if (!response.ok) throw new DeploymentError("nemo", `nemo_http_${response.status}`, `NeMo rejected the operation (HTTP ${response.status}). Check token permissions, request configuration and NeMo logs. Reconcile before retrying a write.`, undefined, response.status >= 400 && response.status < 500 ? response.status : 502);
+      try { result = await response.json(); } catch (error) { throw new DeploymentError("nemo", "nemo_response_invalid", "NeMo returned invalid JSON. Check the gateway and API compatibility.", undefined, 502, error); }
       return result;
     } };
     if (!write) return reply(resource ? await service.resourceStatus(actor, resource, remote) : { ...await service.snapshot(actor), accessMode: config.demo ? "demo" : config.localAccess ? "local" : "authenticated" });

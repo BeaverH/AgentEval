@@ -1,4 +1,4 @@
-# Marketplace v0.2.23 内网离线包
+# Marketplace v0.2.24 内网离线包
 
 复用已有 NeMo 与 PostgreSQL/MariaDB，可选 F5；本包只部署 Marketplace。默认 V3 是带角色切换的演示集成，不要求额外 SSO/账号映射；V2 Mock 独立运行。
 
@@ -9,8 +9,8 @@
 ```sh
 sha256sum -c SHA256SUMS
 podman load -i marketplace-v2.tar
-podman tag ghcr.io/idddd/tali-ui-demo:0.2.23 你的内网镜像仓库/tali-ui:0.2.23
-podman push 你的内网镜像仓库/tali-ui:0.2.23
+podman tag ghcr.io/idddd/tali-ui-demo:0.2.24 你的内网镜像仓库/tali-ui:0.2.24
+podman push 你的内网镜像仓库/tali-ui:0.2.24
 ```
 
 ## 最小连接配置
@@ -20,7 +20,7 @@ podman push 你的内网镜像仓库/tali-ui:0.2.23
 ```yaml
 image:
   repository: 你的内网镜像仓库/tali-ui
-  tag: "0.2.23"
+  tag: "0.2.24"
 marketplace:
   guardApiUrl: https://你的NeMo域名/api/v1
 ```
@@ -57,7 +57,9 @@ Chart 不创建 PVC；目录、加密文件和密钥需一同保留并允许 Pod
 - `/v2/guardrails` / `/v2-mock/guardrails`：独立浏览器 Mock。
 - `/v3/guardrails`：真实集成及同页连接配置。
 - `/api/health`：共享 UI 健康；`/api/nmgr/ready`：真实配置和 DB 诊断，后者不能用于共享 UI readiness。
-- 错误组件、代码、配置项及 Reference 对应结构化日志。TLS 校验不关闭。
+- `/api/docs`：内置 Swagger；`/api/openapi.json`：接口契约；`/api/endpoints`：API 列表。静态资源在 `/api/docs/*` 下，内网无需 CDN。
+- NeMo URL、Token、DB 和可选 F5 有独立测试按钮，不保存配置；错误包含 HTTP 状态、脱敏原因链、排查提示及对应日志的 Reference。
+- 默认 V3 对配置的 NeMo API 跳过证书校验，可设置 `marketplace.nemoTls: verify` 或在配置页恢复验证；F5 和数据库 TLS 策略不变。
 
 本地已验证 NeMo Controller/Runner 提交 `9a1971b81b38e2848641289cf7ce51aab544be28`、PostgreSQL/MariaDB 驱动与真实 NeMo/MariaDB 连接。F5 有契约测试，未连接目标内网 F5 验收。目标 OCP、模型、Runner、业务 Token 权限及真实评测仍需在内网验收。
 

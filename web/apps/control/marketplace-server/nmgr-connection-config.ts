@@ -13,6 +13,7 @@ export const connectionSettingsSchema = z
       .regex(/^[a-z0-9-]{1,24}$/)
       .optional(),
     databaseTls: z.enum(["url", "true"]).optional(),
+    nemoTls: z.enum(["skip", "verify"]).optional(),
     caMode: z.enum(["system", "custom"]).optional(),
     caPem: z.string().trim().max(64_000).optional(),
     f5Mode: z.enum(["disabled", "enabled"]).optional(),
@@ -79,7 +80,10 @@ export function connectionEnvironment(
     MARKETPLACE_CRUD_ONLY: "false",
     MARKETPLACE_V2_LOCAL_ACCESS: "false",
     MARKETPLACE_NEMO_AUTH_MODE: "token",
+    MARKETPLACE_NEMO_TLS: overrides.nemoTls || env.MARKETPLACE_NEMO_TLS || "skip",
   };
+  if (!["skip", "verify"].includes(effective.MARKETPLACE_NEMO_TLS!))
+    throw new DeploymentError("nemo", "nemo_tls_invalid", "Choose skip or verify for NeMo certificate verification.", ["MARKETPLACE_NEMO_TLS"], 422);
   // Default V3 does not use V1/V2 authoring, fixed actors or automatic browser tokens.
   for (const key of [
     "MARKETPLACE_DEMO_TOKEN",

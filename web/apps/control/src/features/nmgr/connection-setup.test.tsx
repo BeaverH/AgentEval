@@ -38,6 +38,23 @@ const status = {
   persistence: "pod",
   manualConfiguration: true,
 };
+it("tests individual entered settings without saving or entering the workspace and clears stale results on edit", async () => {
+  const connected = vi.fn();
+  const fetcher = vi.fn(async (path: string, init?: RequestInit) => path.endsWith("/test")
+    ? Response.json({ ok: true, target: "nemoUrl", message: "Reachable; test Token next", durationMs: 8 })
+    : Response.json({ ...status, advanced: { nemoTls: "skip" } }));
+  vi.stubGlobal("fetch", fetcher);
+  render(<ConnectionSetup onConnected={connected} onRetry={() => {}} />);
+  await screen.findByRole("button", { name: "Use deployment settings" });
+  fireEvent.change(screen.getByLabelText("NeMo URL"), { target: { value: "https://new.test/api/v1" } });
+  fireEvent.click(screen.getByRole("button", { name: "Test NeMo URL" }));
+  expect(await screen.findByText(/Reachable; test Token next/)).toBeTruthy();
+  expect(JSON.parse(String(fetcher.mock.calls.find(([path]) => path.endsWith("/test"))?.[1]?.body))).toEqual({ target: "nemoUrl", settings: { nemoUrl: "https://new.test/api/v1" } });
+  expect(connected).not.toHaveBeenCalled();
+  expect(fetcher.mock.calls.filter(([path, init]) => path === "/api/nmgr/connection" && init?.method === "POST")).toHaveLength(0);
+  fireEvent.change(screen.getByLabelText("NeMo URL"), { target: { value: "https://changed.test/api/v1" } });
+  expect(screen.queryByText(/Reachable; test Token next/)).toBeNull();
+});
 
 it("masks all three fields and saves only entered replacements without browser credential storage", async () => {
   const connected = vi.fn(),

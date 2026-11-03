@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { StoreError } from "./marketplace-db";
+import { connectionErrorDetails } from "./connection-diagnostics";
 
 export type Component = "runtime" | "origin" | "database" | "identity" | "nemo" | "f5" | "workspace";
 export const componentSettings: Record<Component, string[]> = {
@@ -11,11 +12,39 @@ export const componentSettings: Record<Component, string[]> = {
 };
 export class DeploymentError extends StoreError {
   readonly requestId = randomUUID();
-  constructor(public component: Component, public code: string, message: string, public settings = componentSettings[component], status = 503) { super(status, message); }
+  upstream?: { httpStatus: number; contentType: string | null; code?: string; message?: string };
+  constructor(public component: Component, public code: string, message: string, public settings = componentSettings[component], status = 503, cause?: unknown) { super(status, message); if (cause !== undefined) this.cause = cause; }
 }
 
-// Only allowlisted metadata is logged. Never log an Error/cause, headers, bodies,
-// environment values, driver errors, upstream URLs or upstream response bodies.
+export async function upstreamFailure(component: Component, code: string, message: string, response: Response, status = response.status >= 400 && response.status < 500 ? response.status : 502) {
+  const failure = new DeploymentError(component, code, message, undefined, status);
+  failure.upstream = { httpStatus: response.status, contentType: response.headers.get("content-type") };
+  // Only structured error code/message, bounded before parsing. Never render an HTML login page.
+  const reader = response.body?.getReader();
+  if (reader) {
+    const timer = setTimeout(() => { void reader.cancel().catch(() => {}); }, 1000);
+    try {
+      let text = "", size = 0;
+      const decoder = new TextDecoder();
+      while (size <= 16_384) {
+        const part = await reader.read();
+        if (part.done) break;
+        size += part.value.byteLength;
+        if (size > 16_384) break;
+        text += decoder.decode(part.value, { stream: true });
+      }
+      if (size <= 16_384 && failure.upstream.contentType?.includes("application/json")) {
+        const body = JSON.parse(text), detail = body?.error && typeof body.error === "object" ? body.error : body;
+        if (typeof detail?.code === "string") failure.upstream.code = detail.code;
+        if (typeof detail?.message === "string") failure.upstream.message = detail.message;
+      }
+    } catch { /* HTTP status remains usable when the error body cannot be read. */ }
+    finally { clearTimeout(timer); await reader.cancel().catch(() => {}); }
+  }
+  return failure;
+}
+
+// V3 demo adds sanitized causal details. Other workspaces retain metadata-only diagnostics.
 export function reportFailure(error: unknown, component: Component, operation: string, fallback: string) {
   let categorized = error;
   if (!(error instanceof DeploymentError) && component === "database") {
@@ -33,7 +62,8 @@ export function reportFailure(error: unknown, component: Component, operation: s
   const failure = categorized instanceof DeploymentError ? categorized : new DeploymentError(component,
     error instanceof StoreError ? `${component}_${error.status}` : `${component}_unavailable`,
     error instanceof StoreError && !["nemo", "f5"].includes(component) ? error.message : fallback, componentSettings[component], error instanceof StoreError ? error.status : 503);
-  const metadata = { code: failure.code, component: failure.component, settings: failure.settings, requestId: failure.requestId };
+  const details = connectionErrorDetails(error);
+  const metadata = { code: failure.code, component: failure.component, settings: failure.settings, requestId: failure.requestId, ...(details ? { details } : {}) };
   console.error(JSON.stringify({ time: new Date().toISOString(), level: "error", service: "marketplace", event: "dependency_failure", operation, status: failure.status, ...metadata }));
   return { ...metadata, message: failure.message, status: failure.status };
 }

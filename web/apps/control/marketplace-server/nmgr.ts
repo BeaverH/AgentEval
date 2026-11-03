@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import { addEntity, editEntity, reviseEntity, transition, type Entity, type State, type Role } from "../src/features/nmgr/model";
-import { unifiedConfigSchema } from "../src/features/business-demo/evaluation";
+import { commandSchema, caseSchema } from "./nmgr-contract";
 import { StoreError } from "./marketplace-db";
 import { reportFailure } from "./diagnostics";
 import { f5Evaluation, f5Step, type F5Binding, type F5Work } from "./nmgr-f5";
@@ -20,22 +20,6 @@ export interface NmgrPersistence {
   writeDocument(id: string, value: unknown): Promise<void>;
 }
 export interface NmgrRemote { request(path: string, method?: string, body?: unknown): Promise<any> }
-const draftSchema = z.object({
-  id: z.string().regex(/^[a-z][a-z0-9-]{2,63}$/), kind: z.enum(["Guardrail", "Profile"]),
-  name: z.string().trim().min(1).max(100), description: z.string().trim().min(1).max(2000),
-  location: z.string().trim().min(1).max(100), mandatory: z.boolean(), refs: z.array(z.string()).max(128),
-  attributes: z.object({ bu: z.string().max(100), agent: z.string().max(100), data: z.string().max(100) }).strict(),
-  threshold: z.number().min(0).max(100),
-  provider: z.enum(["NeMo", "F5"]).optional(),
-}).strict();
-const caseSchema = z.object({ input: z.string().min(1).max(8000), expected: z.enum(["allow", "block"]), phase: z.enum(["input", "output"]).default("input") }).strict();
-const envelope = { requestId: z.string().uuid(), expectedRevision: z.number().int().nonnegative() };
-const commandSchema = z.discriminatedUnion("type", [
-  z.object({ ...envelope, type: z.enum(["create", "edit", "revise"]), draft: draftSchema }).strict(),
-  z.object({ ...envelope, type: z.literal("action"), id: z.string(), action: z.enum(["implement", "request", "approve", "reject", "withdraw", "deploy"]), reason: z.string().max(2000).optional(), config: unifiedConfigSchema.strict().optional(), provider: z.enum(["NeMo", "F5"]).optional() }).strict(),
-  z.object({ ...envelope, type: z.literal("evaluate"), id: z.string(), dataset: z.string().min(1).max(160), cases: z.array(caseSchema).max(500) }).strict(),
-  z.object({ ...envelope, type: z.enum(["advance", "reconcile"]), id: z.string(), remoteId: z.string().uuid().optional() }).strict(),
-]);
 function fail(status: number, message: string): never { throw new StoreError(status, message); }
 const now = () => new Date().toISOString();
 const empty = (): NmgrDocument => ({ revision: 0, state: { entities: [], audit: [] }, requests: {}, jobs: {}, bindings: {}, authors: {}, requestors: {} });
@@ -214,7 +198,7 @@ export class NmgrService {
         job.canCorrect = true; e.status = "DRAFT"; delete e.signedBy;
       }
       const failure = reportFailure(error, e.provider === "F5" ? "f5" : "nemo", `job.${job.phase}`, "Connection lost or incompatible backend response. Reconcile the remote result before retrying.");
-      job.message = `[${failure.code}] ${failure.message} Check: ${failure.settings.join(", ")}. Reference: ${failure.requestId}`;
+      job.message = `[${failure.code}] ${failure.message} Check: ${failure.settings.join(", ")}. Reference: ${failure.requestId}${failure.details ? `\n${JSON.stringify(failure.details, null, 2)}` : ""}`;
       this.audit(doc, e, actor, `${job.phase}: ${job.status}`);
     }
     await this.save(doc);

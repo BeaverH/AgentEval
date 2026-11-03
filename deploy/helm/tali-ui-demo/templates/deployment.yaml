@@ -62,6 +62,8 @@ spec:
               value: {{ if .Values.marketplace.connectionStorage.existingClaim }}"true"{{ else }}"false"{{ end }}
             - name: GUARD_API_URL
               value: {{ .Values.marketplace.guardApiUrl | quote }}
+            - name: MARKETPLACE_NEMO_TLS
+              value: {{ .Values.marketplace.nemoTls | default "skip" | quote }}
             - name: GUARD_AUTH_ORIGIN
               value: {{ .Values.marketplace.guardAuthOrigin | default "" | quote }}
             {{- if or .Values.marketplace.nemoSecret .Values.marketplace.nemoTokenSecret }}
