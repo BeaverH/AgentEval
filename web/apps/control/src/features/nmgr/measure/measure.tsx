@@ -18,6 +18,9 @@ import { BusinessMeasure } from "./measure-business";
 import { TechnicalMeasure } from "./measure-technical";
 import type { MeasureCenter } from "./measure-runner";
 import "./measure.css";
+import { Button } from "@/components/ui/button";
+import { TechWorkspace } from "./tech-workspace";
+import { ScanJourney } from "./scan-journey";
 
 export function Measure({
   role,
@@ -25,17 +28,22 @@ export function Measure({
   onDashboard,
   center = "overview",
   onCenter,
+  initialBusinessView = "activity",
+  technicalPlaceholders = false,
 }: {
   role: Role;
   onPolicyAdjustment?: () => void;
   onDashboard?: () => void;
   center?: MeasureCenter;
   onCenter?: (center: MeasureCenter) => void;
+  initialBusinessView?: "scans" | "activity";
+  technicalPlaceholders?: boolean;
 }) {
   const [state, setState] = useState<MeasureState>(seedMeasure);
   const [error, setError] = useState("");
   const [loadError, setLoadError] = useState("");
   const [localCenter, setLocalCenter] = useState<MeasureCenter>(center);
+  const [businessView, setBusinessView] = useState(initialBusinessView);
   useEffect(() => {
     function read() {
       try {
@@ -91,7 +99,21 @@ export function Measure({
           {loadError}
         </p>
       )}
-      {role === "IT Admin" ? (
+      {role !== "IT Admin" && (
+        <div className="nm-tabs" role="tablist" aria-label="Measure views">
+          <Button
+            role="tab"
+            aria-selected={businessView === "scans"}
+            variant={businessView === "scans" ? "secondary" : "ghost"}
+            onClick={() => setBusinessView("scans")}
+          >
+            Scan Overview
+          </Button>
+        </div>
+      )}
+      {role === "IT Admin" && technicalPlaceholders ? (
+        <TechWorkspace />
+      ) : role === "IT Admin" ? (
         <TechnicalMeasure
           key={role}
           state={state}
@@ -101,6 +123,15 @@ export function Measure({
           center={onCenter ? center : localCenter}
           onCenter={onCenter ?? setLocalCenter}
           {...(onPolicyAdjustment ? { onPolicyAdjustment } : {})}
+        />
+      ) : businessView === "scans" ? (
+        <ScanJourney
+          key={role}
+          state={state}
+          role={role}
+          change={change}
+          error={error}
+          clearError={() => setError("")}
         />
       ) : (
         <BusinessMeasure

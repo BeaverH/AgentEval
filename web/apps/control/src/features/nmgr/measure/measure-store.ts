@@ -102,6 +102,24 @@ export function readMeasure(raw: string): MeasureState {
   const parsed = JSON.parse(raw) as MeasureState;
   if (
     parsed?.version !== 1 ||
+    (parsed.suspendedGuardrails !== undefined &&
+      (!Array.isArray(parsed.suspendedGuardrails) ||
+        parsed.suspendedGuardrails.some(
+          (id) =>
+            typeof id !== "string" ||
+            !policyHits.some((p) => p.guardrail === id),
+        ))) ||
+    (parsed.feedback !== undefined &&
+      (!Array.isArray(parsed.feedback) ||
+        parsed.feedback.some(
+          (f) =>
+            !f ||
+            typeof f.eventId !== "string" ||
+            !["common", "false-negative"].includes(f.category) ||
+            typeof f.description !== "string" ||
+            typeof f.reporter !== "string" ||
+            typeof f.time !== "string",
+        ))) ||
     !Array.isArray(parsed.reports) ||
     parsed.reports.some(
       (r) =>

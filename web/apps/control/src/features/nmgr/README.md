@@ -1,5 +1,20 @@
 # NMGR prototype Demo
 
+## Measure Scan Overview (2026-11-03)
+
+V2 business workbenches now open Measure on Scan Overview, following the green
+Measure FigJam flow and the eight NMGR low-fidelity screens. Existing V2
+`agents`, `policyHits`, `policyEvents` and evidence placeholders supply both
+Guardrail and Agent drill-down paths. Missing Profile fields remain placeholders;
+no runtime data or real service is queried. `Transformed` examples display as
+`Modified` in this flow. Passed examples are not fabricated.
+
+Feedback and simulated Guardrail hang-up use the existing browser-only Measure
+storage key. False-positive reports remain available to the existing Tech review;
+common feedback is stored locally. The Breach Monitor entry is hidden; its
+previous business screen remains in code. The Tech Measure workbench uses placeholder-only performance, resource, and feedback views. This feature is
+not exposed in Real V3.
+
 ## Figma Measure import (2026-10-27)
 
 The `/v2` Mock entry (legacy alias `/v2-mock`) includes Measure for all three workbenches, adapted
@@ -93,3 +108,5 @@ Internal entity, policy and scan IDs are hidden from visible UI summaries, detai
 Demo scans use a minute-stable rolling snapshot shared by dashboard, alerts, and monitoring. Block/Pass Rate scenarios generate ten checks per deployed binding within the configured window (nine blocked or ten passed); legacy error-rate scenarios retain twelve checks over 5.5 minutes. Trace retains its navigation and title only; its content is intentionally blank while audit records continue to be stored.
 
 The real workspace is now served at /v3/guardrails. V2 is always Mock; existing browser storage keys are preserved. Runtime failures show actionable configuration diagnostics and a correlated reference ID. See docs/uat/2026-10-28-v3-deployment-diagnostics.md.
+
+Tech Measure follows the blue FigJam flow: throughput/latency/model/resource trends with DoD or MoM comparisons, model and runner details, and categorized feedback review/closure. Values use em dashes and explicitly labeled placeholders; no metric series, model/runner identities, feedback records, or successful closures are fabricated. Closure input previews remain in component memory only. Routes and filters are stored in the fragment query for reload and browser navigation.

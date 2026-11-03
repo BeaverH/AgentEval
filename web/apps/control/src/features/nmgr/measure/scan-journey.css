@@ -1,0 +1,165 @@
+.nm-scan-page-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.nm-scan-page-head h2 {
+  font-size: 22px;
+  margin: 6px 0 0;
+}
+.nm-scan-page-head p,
+.nm-scan-note {
+  font-size: 12px;
+}
+.nm-scan-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.nm-scan-metrics button {
+  background: white;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  padding: 20px;
+  display: grid;
+  text-align: left;
+  gap: 8px;
+}
+.nm-scan-metrics button[aria-pressed="true"] {
+  border-color: var(--primary);
+}
+.nm-scan-metrics span,
+.nm-scan-metrics small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+.nm-scan-metrics strong {
+  font-size: 30px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+.nm-scan-journey [data-decision="passed"] {
+  --nm-decision-color: #307750;
+  --nm-decision-background: #eaf5ef;
+}
+.nm-scan-journey [data-decision="blocked"] {
+  --nm-decision-color: #ad2b2b;
+  --nm-decision-background: #fdecec;
+}
+.nm-scan-journey :is(th, td)[data-decision] {
+  color: var(--nm-decision-color);
+  background: color-mix(in srgb, var(--nm-decision-background) 45%, white);
+}
+.nm-scan-journey td[data-decision] {
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+.nm-scan-metrics button[data-decision] :is(span, strong) {
+  color: var(--nm-decision-color);
+}
+.nm-scan-metrics button[data-decision] {
+  border-top: 3px solid var(--nm-decision-color);
+}
+.nm-scan-metrics button[data-decision][aria-pressed="true"] {
+  border-color: var(--nm-decision-color);
+  background: var(--nm-decision-background);
+}
+.nm-scan-filters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.nm-scan-filters input {
+  max-width: 360px;
+  background: white;
+}
+.nm-scan-empty {
+  padding: 40px !important;
+  text-align: center;
+  color: var(--muted-foreground);
+}
+.nm-scan-id {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.nm-scan-journey td:first-child {
+  min-width: 190px;
+}
+.nm-scan-journey td small {
+  display: block;
+  color: var(--muted-foreground);
+  margin-top: 4px;
+  font-size: 11px;
+}
+.nm-scan-context {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.nm-scan-details p {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  margin: 12px 0;
+}
+.nm-scan-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+  margin: 16px 0;
+}
+.nm-scan-form {
+  display: grid;
+  gap: 24px;
+}
+.nm-scan-form fieldset {
+  display: grid;
+  gap: 12px;
+}
+.nm-scan-form legend {
+  margin-bottom: 14px;
+  font-weight: 600;
+}
+.nm-scan-form label {
+  display: grid;
+  gap: 10px;
+}
+.nm-scan-form fieldset label {
+  display: flex;
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-control);
+  padding: 16px;
+}
+.nm-scan-form fieldset label:has(input:disabled) {
+  opacity: 0.5;
+}
+.nm-scan-form fieldset input {
+  margin-top: 4px;
+  accent-color: var(--primary);
+}
+.nm-scan-form small {
+  display: block;
+  margin-top: 4px;
+  color: var(--muted-foreground);
+}
+.nm-scan-form textarea {
+  min-height: 130px;
+  background: white;
+}
+@media (max-width: 760px) {
+  .nm-scan-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .nm-scan-context {
+    grid-template-columns: 1fr;
+  }
+}

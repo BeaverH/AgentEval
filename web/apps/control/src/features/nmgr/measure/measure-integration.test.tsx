@@ -45,8 +45,11 @@ it.each(["User", "User Admin", "IT Admin"])(
       ).toBeTruthy();
     else
       expect(
-        screen.getByText("Last 10 Minutes in Your Control Unit"),
+        screen.getByRole("heading", { name: "Scan Overview" }),
       ).toBeTruthy();
+    if (role !== "IT Admin") {
+      expect(screen.queryByRole("tab", { name: "Breach Monitor" })).toBeNull();
+    }
     expect(localStorage.getItem("nmgr-v2-mock-state")).toBe(before);
     expect(network).not.toHaveBeenCalled();
   },

@@ -1,4 +1,4 @@
-# Marketplace v0.2.24 内网离线包
+# Marketplace v0.2.25 内网离线包
 
 复用已有 NeMo 与 PostgreSQL/MariaDB，可选 F5；本包只部署 Marketplace。默认 V3 是带角色切换的演示集成，不要求额外 SSO/账号映射；V2 Mock 独立运行。
 
@@ -9,8 +9,8 @@
 ```sh
 sha256sum -c SHA256SUMS
 podman load -i marketplace-v2.tar
-podman tag ghcr.io/idddd/tali-ui-demo:0.2.24 你的内网镜像仓库/tali-ui:0.2.24
-podman push 你的内网镜像仓库/tali-ui:0.2.24
+podman tag ghcr.io/idddd/tali-ui-demo:0.2.25 你的内网镜像仓库/tali-ui:0.2.25
+podman push 你的内网镜像仓库/tali-ui:0.2.25
 ```
 
 ## 最小连接配置
@@ -20,7 +20,7 @@ podman push 你的内网镜像仓库/tali-ui:0.2.24
 ```yaml
 image:
   repository: 你的内网镜像仓库/tali-ui
-  tag: "0.2.24"
+  tag: "0.2.25"
 marketplace:
   guardApiUrl: https://你的NeMo域名/api/v1
 ```

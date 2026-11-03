@@ -64,8 +64,8 @@ it.each(["network", "configuration", "database", "f5"])("keeps saved Mock work u
   ui.rerender(<NmgrApp mock />);
   fireEvent.click(screen.getByRole("button", { name: "Measure" }));
   expect(screen.getByRole("heading", { name: "Resource Health" })).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Open Guardrail Runners" }));
-  expect(screen.getByRole("heading", { name: "1 Runner serving" })).toBeTruthy();
+  fireEvent.click(screen.getByRole("button", { name: "View Runners" }));
+  expect(screen.getByRole("heading", { name: "Runner List" })).toBeTruthy();
   expect(network).toHaveBeenCalledTimes(requests);
   expect(localStorage.getItem("nmgr-v2-mock-state")).toBe(saved);
 });

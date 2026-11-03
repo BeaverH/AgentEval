@@ -26,13 +26,11 @@ beforeEach(() => {
       disconnect() {}
     },
   );
-  window.matchMedia = vi
-    .fn()
-    .mockReturnValue({
-      matches: false,
-      addEventListener() {},
-      removeEventListener() {},
-    });
+  window.matchMedia = vi.fn().mockReturnValue({
+    matches: false,
+    addEventListener() {},
+    removeEventListener() {},
+  });
 });
 afterEach(() => {
   cleanup();
@@ -41,62 +39,31 @@ afterEach(() => {
   vi.useRealTimers();
 });
 
-it("opens the Runner screenshot layout, expands details/planning, refreshes and returns to Measure", () => {
+it("opens placeholder Runner details from the Tech overview without requests", () => {
   const network = vi.fn();
   vi.stubGlobal("fetch", network);
   render(<NmgrApp mock />);
+  fireEvent.click(screen.getByRole("button", { name: "View Runners" }));
+  expect(window.location.hash).toContain("tech=runners");
   fireEvent.click(
-    screen.getByRole("button", { name: "Open Guardrail Runners" }),
+    screen.getByRole("button", { name: "Preview runner status" }),
   );
-  expect(window.location.hash).toBe("#Profile/runners/");
-  expect(
-    screen.getByRole("heading", { name: "Guardrail Runners" }),
-  ).toBeTruthy();
-  expect(
-    screen.getByRole("heading", { name: "1 Runner serving" }),
-  ).toBeTruthy();
-  expect(screen.getByText("Updates every 10s")).toBeTruthy();
-  fireEvent.click(
-    screen.getByRole("button", { name: "marketplace-uat-local-1" }),
-  );
-  expect(screen.getByText("7 / 7")).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Capacity planning" }));
-  expect(
-    screen.getByText(/Changing them does not start or stop Runners/),
-  ).toBeTruthy();
-  fireEvent.click(screen.getByRole("button", { name: "Refresh" }));
-  expect(screen.getByRole("status").textContent).toContain(
-    "Runner data is up to date",
-  );
-  fireEvent.click(screen.getByRole("button", { name: "Back to Measure" }));
-  expect(window.location.hash).toBe("#Profile/measure/");
+  expect(screen.getByRole("heading", { name: "Runner Status" })).toBeTruthy();
+  expect(screen.queryByText("marketplace-uat-local-1")).toBeNull();
   expect(network).not.toHaveBeenCalled();
 });
-
-it("opens a Runner bookmark only for Tech and cleans up the update timer", () => {
-  vi.useFakeTimers();
+it("opens the existing Runner bookmark with placeholders and no simulated update timer", () => {
+  const interval = vi.spyOn(window, "setInterval");
   window.history.replaceState(
     null,
     "",
     "/v2/guardrails?role=tech#Profile/runners/",
   );
   const { unmount } = render(<NmgrApp mock />);
-  expect(
-    screen.getByRole("heading", { name: "1 Runner serving" }),
-  ).toBeTruthy();
-  const before = screen.getByLabelText("Last updated").textContent;
-  act(() => vi.advanceTimersByTime(10000));
-  expect(screen.getByLabelText("Last updated").textContent).not.toBe(before);
-  fireEvent.click(screen.getByRole("tab", { name: "Version" }));
-  expect(screen.getByText("NeMo version")).toBeTruthy();
-  fireEvent.click(screen.getByRole("tab", { name: "Health" }));
-  expect(
-    screen.getByText(
-      "All connected Runners have applied their current configuration.",
-    ),
-  ).toBeTruthy();
+  expect(screen.getByRole("heading", { name: "Runner List" })).toBeTruthy();
+  expect(screen.queryByText("Updates every 10s")).toBeNull();
   unmount();
-  expect(vi.getTimerCount()).toBe(0);
+  expect(interval).not.toHaveBeenCalled();
 });
 
 it.each(["User", "User Admin"] as const)(

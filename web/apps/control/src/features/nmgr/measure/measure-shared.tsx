@@ -8,7 +8,7 @@ export function StatusBadge({ children }: { children: string }) {
   const tone =
     children === "Blocked"
       ? "bad"
-      : children === "Reviewed"
+      : children === "Reviewed" || children === "Passed"
         ? "good"
         : children === "Transformed"
           ? "info"

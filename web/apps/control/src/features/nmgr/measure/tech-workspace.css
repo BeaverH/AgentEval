@@ -1,0 +1,250 @@
+.nm-tech-workspace {
+  display: grid;
+  gap: 24px;
+}
+.nm-tech-heading,
+.nm-tech-section-heading,
+.nm-tech-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.nm-tech-heading nav {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.nm-tech-heading h2 {
+  font-size: 24px;
+  margin: 8px 0;
+}
+.nm-tech-heading p {
+  font-size: 13px;
+}
+.nm-tech-section-heading {
+  margin-bottom: 14px;
+}
+.nm-tech-section-heading h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 18px;
+  margin: 0;
+}
+.nm-tech-section-heading > span {
+  font-size: 12px;
+}
+.nm-tech-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.nm-tech-metric {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  min-width: 0;
+  min-height: 180px;
+  padding: 20px;
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-card);
+  text-align: left;
+  cursor: pointer;
+}
+.nm-tech-metric:hover {
+  border-color: var(--primary);
+  background: var(--accent);
+}
+.nm-tech-metric:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+}
+.nm-tech-metric-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  font-size: 14px;
+  font-weight: 600;
+  width: 100%;
+}
+.nm-tech-value {
+  font-size: 32px;
+  line-height: 1.5;
+  font-weight: 500;
+}
+.nm-tech-value small {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  font-weight: 400;
+}
+.nm-tech-metric-foot {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-top: auto;
+}
+.nm-tech-fields {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 20px;
+  margin: 0;
+  padding: 22px;
+}
+.nm-tech-fields dt {
+  font-size: 12px;
+  color: var(--muted-foreground);
+  margin-bottom: 6px;
+}
+.nm-tech-fields dd {
+  margin: 0;
+  font-size: 17px;
+}
+.nm-tech-metric .nm-tech-fields {
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  width: 100%;
+}
+.nm-tech-metric .nm-tech-fields > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+}
+.nm-tech-metric .nm-tech-fields dt {
+  margin: 0;
+}
+.nm-tech-metric .nm-tech-fields dd {
+  font-size: 14px;
+}
+.nm-tech-placeholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 104px;
+  padding: 20px;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-card);
+  background: var(--muted);
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+}
+.nm-tech-placeholder small {
+  font-size: 11px;
+}
+.nm-tech-chart {
+  min-height: 250px;
+  margin: 22px;
+  background:
+    repeating-linear-gradient(
+      to bottom,
+      transparent,
+      transparent 49px,
+      var(--border) 50px
+    ),
+    var(--muted);
+}
+.nm-tech-two {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 2fr);
+  gap: 20px;
+}
+.nm-tech-two > div {
+  display: grid;
+  align-content: start;
+  gap: 20px;
+}
+.nm-tech-two > .nm-measure-card {
+  align-self: start;
+}
+.nm-tech-filters {
+  display: flex;
+  align-items: end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding: 20px;
+}
+.nm-tech-search {
+  display: grid;
+  gap: 6px;
+  flex: 1;
+  min-width: 190px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.nm-tech-table-footer,
+.nm-tech-footer {
+  padding: 18px 22px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.nm-tech-table-footer {
+  border-top: 1px solid var(--border);
+}
+.nm-tech-row-label {
+  color: var(--muted-foreground);
+  font-style: italic;
+}
+.nm-tech-workspace td {
+  height: 70px;
+}
+.nm-tech-tag {
+  font-size: 11px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: var(--muted-foreground);
+}
+.nm-tech-evidence,
+.nm-tech-form {
+  display: grid;
+  gap: 16px;
+  padding: 22px;
+}
+.nm-tech-evidence h4,
+.nm-tech-form h4 {
+  font-size: 13px;
+  margin: 0;
+}
+.nm-tech-form label {
+  display: grid;
+  gap: 8px;
+  font-size: 13px;
+}
+.nm-tech-form-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.nm-tech-comment {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.nm-tech-workspace .nm-measure-card {
+  margin: 0;
+}
+.nm-tech-workspace table {
+  min-width: 600px;
+}
+@media (max-width: 900px) {
+  .nm-tech-grid {
+    grid-template-columns: 1fr;
+  }
+  .nm-tech-two {
+    grid-template-columns: 1fr;
+  }
+  .nm-tech-metric {
+    min-height: 140px;
+  }
+}
+
+.nm-tech-heading nav { display:flex; flex-direction:row; align-items:center; gap:4px; }

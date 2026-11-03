@@ -833,7 +833,7 @@ export function DemoNmgrApp() {
             Guardrails
           </p>
         )}
-        {["measure", "runners", "protection"].includes(view) ? <Measure key={role} role={role} center={view === "runners" ? "runners" : view === "protection" ? "protection" : "overview"} onCenter={center => go("Profile", center === "overview" ? "measure" : center)} onDashboard={() => go("Profile", "dashboard")} onPolicyAdjustment={() => go("Guardrail", "repository")} /> : view === "request" ? (
+        {["measure", "runners", "protection"].includes(view) ? <Measure key={role} role={role} initialBusinessView="scans" technicalPlaceholders center={view === "runners" ? "runners" : view === "protection" ? "protection" : "overview"} onCenter={center => go("Profile", center === "overview" ? "measure" : center)} onDashboard={() => go("Profile", "dashboard")} onPolicyAdjustment={() => go("Guardrail", "repository")} /> : view === "request" ? (
           <section className="nm-card nm-padding nm-request-page">
             {error && (
               <div role="alert" className="nm-inline-notice nm-inline-error">

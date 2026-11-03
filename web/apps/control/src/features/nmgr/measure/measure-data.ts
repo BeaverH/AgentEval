@@ -65,7 +65,19 @@ export type Report = {
   evidence: Evidence;
   review?: Review;
 };
-export type MeasureState = { version: 1; reports: Report[] };
+export type MeasureFeedback = {
+  eventId: string;
+  category: "common" | "false-negative";
+  description: string;
+  reporter: string;
+  time: string;
+};
+export type MeasureState = {
+  version: 1;
+  reports: Report[];
+  feedback?: MeasureFeedback[];
+  suspendedGuardrails?: string[];
+};
 
 const agent = (
   id: string,

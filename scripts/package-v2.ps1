@@ -1,7 +1,7 @@
 param(
-  [string]$Image = 'ghcr.io/idddd/tali-ui-demo:0.2.24',
+  [string]$Image = 'ghcr.io/idddd/tali-ui-demo:0.2.25',
   [ValidatePattern('^[a-z0-9][a-z0-9-]{0,80}$')]
-  [string]$ReleaseName = 'marketplace-v3-0-2-24-offline',
+  [string]$ReleaseName = 'marketplace-v3-0-2-25-offline',
   [switch]$SkipBuild
 )
 $ErrorActionPreference = 'Stop'
@@ -9,7 +9,7 @@ $taskRoot = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $releaseRoot = Join-Path $taskRoot ".artifacts/releases/$ReleaseName"
 if (Test-Path -LiteralPath $releaseRoot) { throw 'Release directory already exists; preserve the previous package or choose a new release path.' }
 if (-not $SkipBuild) {
-  & docker build --platform linux/amd64 -f (Join-Path $taskRoot 'deploy/Dockerfile.marketplace') --build-arg TALI_UI_DEMO_IMAGE_TAG=0.2.24 -t $Image $taskRoot
+  & docker build --platform linux/amd64 -f (Join-Path $taskRoot 'deploy/Dockerfile.marketplace') --build-arg TALI_UI_DEMO_IMAGE_TAG=0.2.25 -t $Image $taskRoot
   if ($LASTEXITCODE -ne 0) { throw 'V2 image build failed.' }
   & node (Join-Path $taskRoot 'scripts/uat/verify-ui-isolation.mjs') $Image (Join-Path $taskRoot '.artifacts/mock-isolation-runtime.json')
   if ($LASTEXITCODE -ne 0) { throw 'Image isolation verification failed.' }
@@ -31,8 +31,8 @@ Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/v2-refresh-and-nemo-create
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/v2-creation-integration-differences.md') -Destination (Join-Path $releaseRoot 'creation-integration-differences.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/v2-page-alignment.md') -Destination (Join-Path $releaseRoot 'page-alignment.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/2026-10-28-v3-deployment-diagnostics.md') -Destination (Join-Path $releaseRoot 'deployment-diagnostics.md')
-Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/2026-11-03-v0.2.24-release-validation.md') -Destination (Join-Path $releaseRoot 'mock-isolation-validation.md')
-Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/2026-10-28-tech-measure-metrics.md') -Destination (Join-Path $releaseRoot 'current-ui-metrics.md')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/2026-11-03-v0.2.25-release-validation.md') -Destination (Join-Path $releaseRoot 'mock-isolation-validation.md')
+Copy-Item -LiteralPath (Join-Path $taskRoot 'docs/uat/2026-11-03-measure-placeholder-ui.md') -Destination (Join-Path $releaseRoot 'current-ui-metrics.md')
 Copy-Item -LiteralPath (Join-Path $taskRoot 'scripts/uat/verify-ui-isolation.mjs') -Destination (Join-Path $releaseRoot 'verify-ui-isolation.mjs')
 Copy-Item -LiteralPath (Join-Path $taskRoot '.artifacts/mock-isolation-runtime.json') -Destination (Join-Path $releaseRoot 'isolation-test-results.json')
 foreach ($name in @('README.md','database.env.example','marketplace.env.example','nemo.env.example','f5.env.example','check-nemo.mjs')) {

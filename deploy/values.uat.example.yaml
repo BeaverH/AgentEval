@@ -1,10 +1,10 @@
-# V3 demo connection defaults for v0.2.24.
+# V3 demo connection defaults for v0.2.25.
 # Deploy Marketplace only. Use existing NeMo and PostgreSQL (or MariaDB).
 replicaCount: 1
 fullnameOverride: marketplace-v2
 image:
   repository: registry.example.internal/marketplace-ui
-  tag: "0.2.24"
+  tag: "0.2.25"
 openshift:
   enabled: true
   route:
